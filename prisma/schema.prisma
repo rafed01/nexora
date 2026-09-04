@@ -1,0 +1,27 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model AccessRequest {
+  id              String   @id @default(cuid())
+  name            String
+  email           String
+  organization    String
+  role            String
+  targetInterests String   // JSON-encoded array or comma-separated interests
+  clearanceLevel  String   @default("LEVEL_2")
+  ndaAgreed       Boolean  @default(true)
+  status          String   @default("PENDING_REVIEW") // PENDING_REVIEW, APPROVED, REJECTED
+  clearanceToken  String   @unique
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([email])
+  @@index([status])
+}
