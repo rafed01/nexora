@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
 import {
   Search,
@@ -250,10 +250,55 @@ export default function ExplorePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTrlFilter, setSelectedTrlFilter] = useState<number | 'all'>('all');
   const [activeItem, setActiveItem] = useState<DiscoveryItem | null>(null);
+  const [discoveryItems, setDiscoveryItems] = useState<DiscoveryItem[]>(DISCOVERY_DATA);
+
+  // Fetch dynamic catalog items from API and merge
+  useEffect(() => {
+    async function fetchDynamicCatalog() {
+      try {
+        const res = await fetch('/api/catalog');
+        if (res.ok) {
+          const json = await res.json();
+          if (Array.isArray(json.catalog) && json.catalog.length > 0) {
+            const mappedCatalog: DiscoveryItem[] = json.catalog.map((c: any) => ({
+              id: c.id,
+              type: (c.type || 'technology') as EntityType,
+              title: c.title || 'Untitled Innovation Node',
+              category: c.category || 'Deep Tech',
+              trl: typeof c.trl === 'number' ? c.trl : Number(c.trl) || 6,
+              trlStage: c.trlStage || `TRL ${c.trl || 6} Validated System`,
+              organization: c.organization || 'Independent Innovation Lab',
+              location: c.location || 'Global Distributed',
+              description: c.description || `${c.title} registered in NEXORA innovation network.`,
+              tags: Array.isArray(c.tags) && c.tags.length > 0 ? c.tags : [c.category || 'Deep Tech', 'Verified Asset'],
+              metrics: Array.isArray(c.metrics) && c.metrics.length > 0 ? c.metrics : [
+                { label: 'Readiness', value: `TRL ${c.trl || 6}` },
+                { label: 'Status', value: c.status || 'Active' },
+              ],
+              milestones: Array.isArray(c.milestones) && c.milestones.length > 0 ? c.milestones : [
+                'Registered into NEXORA global node registry',
+                'Curator verification passed',
+              ],
+            }));
+
+            setDiscoveryItems((prev) => {
+              const existingIds = new Set(prev.map((i) => i.id));
+              const newItems = mappedCatalog.filter((item) => !existingIds.has(item.id));
+              return [...newItems, ...prev];
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch dynamic catalog:', err);
+      }
+    }
+
+    fetchDynamicCatalog();
+  }, []);
 
   // Filter items based on active criteria
   const filteredItems = useMemo(() => {
-    return DISCOVERY_DATA.filter((item) => {
+    return discoveryItems.filter((item) => {
       // Type filter
       if (selectedType !== 'all' && item.type !== selectedType) {
         return false;
@@ -280,16 +325,16 @@ export default function ExplorePage() {
 
       return true;
     });
-  }, [selectedType, selectedTrlFilter, searchQuery]);
+  }, [discoveryItems, selectedType, selectedTrlFilter, searchQuery]);
 
   const counts = useMemo(() => {
     return {
-      all: DISCOVERY_DATA.length,
-      technology: DISCOVERY_DATA.filter((i) => i.type === 'technology').length,
-      startup: DISCOVERY_DATA.filter((i) => i.type === 'startup').length,
-      expert: DISCOVERY_DATA.filter((i) => i.type === 'expert').length,
+      all: discoveryItems.length,
+      technology: discoveryItems.filter((i) => i.type === 'technology').length,
+      startup: discoveryItems.filter((i) => i.type === 'startup').length,
+      expert: discoveryItems.filter((i) => i.type === 'expert').length,
     };
-  }, []);
+  }, [discoveryItems]);
 
   const getTypeIcon = (type: EntityType) => {
     switch (type) {
@@ -314,99 +359,7 @@ export default function ExplorePage() {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col selection:bg-cyan-500/20 selection:text-cyan-200">
-      {/* Discovery Header & Navigation */}
-      <header
-        id="explore-header"
-        className="sticky top-0 z-40 border-b border-neutral-800/90 bg-neutral-950/95 backdrop-blur-md"
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <Link
-              id="back-home-link"
-              href="/"
-              className="inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-neutral-100 transition-colors p-1.5 rounded-lg hover:bg-neutral-900"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span className="hidden sm:inline">Back</span>
-            </Link>
-
-            <div className="h-4 w-px bg-neutral-800" />
-
-            <div className="flex items-center gap-2.5">
-              <div
-                id="explore-brand-icon"
-                className="w-8 h-8 rounded-lg bg-neutral-900 border border-neutral-700/80 flex items-center justify-center text-cyan-400"
-              >
-                <Compass className="w-4 h-4" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-sm font-semibold tracking-wider font-mono text-neutral-100">
-                  NEXORA
-                </span>
-                <span className="text-[10px] text-neutral-400 uppercase tracking-wider">
-                  Discovery Dashboard
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Search bar inside header */}
-          <div className="flex-1 max-w-md hidden md:block">
-            <div className="relative">
-              <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                id="header-search-input"
-                type="text"
-                placeholder="Search deep-tech, labs, experts, or domains..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-1.5 text-xs bg-neutral-900/80 border border-neutral-800 rounded-lg text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-cyan-500 transition-colors"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-200"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2.5">
-            <Link
-              id="header-reports-link"
-              href="/reports"
-              className="inline-flex items-center justify-center text-xs font-semibold px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-300 transition-colors"
-            >
-              Reports
-            </Link>
-            <Link
-              id="header-challenges-link"
-              href="/challenges"
-              className="inline-flex items-center justify-center text-xs font-semibold px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-300 transition-colors"
-            >
-              Challenges
-            </Link>
-            <Link
-              id="header-scout-link"
-              href="/ai-scout"
-              className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-900/50 transition-colors"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-              <span>AI Scout</span>
-            </Link>
-            <Link
-              id="header-admin-link"
-              href="/admin"
-              className="hidden sm:inline-flex items-center justify-center text-xs font-semibold px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-neutral-400 hover:text-neutral-200 transition-colors"
-            >
-              Admin
-            </Link>
-          </div>
-        </div>
-      </header>
+      
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">

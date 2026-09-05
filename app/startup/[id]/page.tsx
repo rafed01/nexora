@@ -375,57 +375,7 @@ export default async function StartupDetailPage({
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col selection:bg-cyan-500/20 selection:text-cyan-200">
-      {/* Sticky Header */}
-      <header
-        id="startup-header"
-        className="sticky top-0 z-40 border-b border-neutral-800/90 bg-neutral-950/95 backdrop-blur-md"
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <Link
-              id="back-to-explore-btn"
-              href="/explore"
-              className="inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-neutral-100 transition-colors p-1.5 rounded-lg hover:bg-neutral-900"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span>Back to Catalog</span>
-            </Link>
-
-            <div className="h-4 w-px bg-neutral-800" />
-
-            <div className="flex items-center gap-2 text-xs font-mono text-neutral-400">
-              <span className="text-neutral-500">Startup Dossier:</span>
-              <span className="text-cyan-400 font-semibold">{startup.name}</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Link
-              href="/dashboard"
-              className="hidden sm:inline-flex items-center gap-1.5 text-xs font-medium text-neutral-400 hover:text-cyan-300 transition-colors px-3 py-1.5 rounded-lg hover:bg-neutral-900"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-              <span>AI Scout</span>
-            </Link>
-
-            <Link
-              href="/challenges"
-              className="inline-flex items-center justify-center text-xs font-semibold px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-200 transition-colors"
-            >
-              Corporate Challenges
-            </Link>
-
-            <a
-              id="btn-contact-founders"
-              href="#contact-dialog"
-              className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-3.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-neutral-950 transition-colors"
-            >
-              <Mail className="w-3.5 h-3.5" />
-              <span>Contact Team</span>
-            </a>
-          </div>
-        </div>
-      </header>
+      
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-12">

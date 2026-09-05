@@ -179,71 +179,7 @@ ${result.recommendations
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col selection:bg-cyan-500/20 selection:text-cyan-200">
-      {/* Top Header */}
-      <header
-        id="scout-header"
-        className="sticky top-0 z-40 border-b border-neutral-800/90 bg-neutral-950/95 backdrop-blur-md"
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <Link
-              id="back-home-btn"
-              href="/"
-              className="flex items-center gap-2 text-neutral-100 font-bold tracking-tight hover:opacity-90 transition-opacity"
-            >
-              <div className="w-8 h-8 rounded-lg bg-cyan-950/80 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
-                <Sparkles className="w-4 h-4" />
-              </div>
-              <span className="font-mono text-sm tracking-wider">NEXORA</span>
-            </Link>
-
-            <div className="h-4 w-px bg-neutral-800" />
-
-            <div className="flex items-center gap-2 text-xs font-mono text-neutral-400">
-              <span className="text-neutral-500">Engine:</span>
-              <span className="text-cyan-400 font-semibold">Gemini 3.8 Flash AI Scout</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Link
-              href="/explore"
-              className="text-xs font-medium text-neutral-400 hover:text-neutral-200 transition-colors px-3 py-1.5 rounded-lg hover:bg-neutral-900"
-            >
-              Catalog
-            </Link>
-
-            <Link
-              href="/challenges"
-              className="text-xs font-medium text-neutral-400 hover:text-neutral-200 transition-colors px-3 py-1.5 rounded-lg hover:bg-neutral-900"
-            >
-              Challenges
-            </Link>
-
-            <Link
-              href="/reports"
-              className="text-xs font-medium text-neutral-400 hover:text-neutral-200 transition-colors px-3 py-1.5 rounded-lg hover:bg-neutral-900"
-            >
-              Reports
-            </Link>
-
-            <Link
-              href="/admin"
-              className="hidden sm:inline-flex items-center justify-center text-xs font-semibold px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-neutral-400 hover:text-neutral-200 transition-colors"
-            >
-              Curator Admin
-            </Link>
-
-            <Link
-              href="/dashboard"
-              className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-neutral-950 transition-colors"
-            >
-              <Database className="w-3.5 h-3.5" />
-              <span>Workspace Dashboard</span>
-            </Link>
-          </div>
-        </div>
-      </header>
+      
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-10">

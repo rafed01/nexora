@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Shield,
   Layers,
@@ -38,9 +39,34 @@ import {
   Database,
   BarChart3,
   Award,
+  LogOut,
+  ShieldCheck,
+  UserCheck,
+  KeyRound,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react';
+import { getBrowserSupabase, isSupabaseEnabled } from '@/lib/supabaseClient';
+import { useAuth } from '@/components/providers/AuthProvider';
 
-type EntityTab = 'technologies' | 'startups' | 'experts' | 'challenges' | 'reports' | 'requests';
+type EntityTab = 'technologies' | 'startups' | 'experts' | 'challenges' | 'reports' | 'requests' | 'accounts';
+
+export interface AccountApprovalItem {
+  id: string;
+  email: string;
+  full_name: string;
+  role: 'user' | 'independent' | 'enterprise' | 'advisor' | 'company';
+  company_name?: string | null;
+  status?: 'pending' | 'approved' | 'rejected';
+  approval_status?: 'pending' | 'approved' | 'rejected';
+  created_at?: string;
+  metadata?: {
+    approved_by?: string;
+    decided_at?: string;
+    rejection_reason?: string;
+    [key: string]: any;
+  };
+}
 
 interface AdminItem {
   id: string;
@@ -284,12 +310,220 @@ const INITIAL_REQUESTS: AccessRequest[] = [
 ];
 
 export default function AdminPage() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<EntityTab>('technologies');
   const [entities, setEntities] = useState<AdminItem[]>(INITIAL_ENTITIES);
-  const [requests, setRequests] = useState<AccessRequest[]>(INITIAL_REQUESTS);
+  const [requests, setRequests] = useState<AccessRequest[]>([]);
+  const [accounts, setAccounts] = useState<AccountApprovalItem[]>([]);
+  const [isProcessingAccount, setIsProcessingAccount] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Authentication State
+  const { user: authUser, profile: authProfile, isLoading: isAuthLoading } = useAuth();
+  const [sessionUser, setSessionUser] = useState<{ email?: string; id?: string; role?: string } | null>(null);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+
+  // Derive consolidated admin status strictly from verified database profile
+  const isAdmin = useMemo(() => {
+    return authProfile?.role === 'admin' || sessionUser?.role === 'admin';
+  }, [authProfile, sessionUser]);
+
+  // Sync Supabase Auth Session & Strict Role Verification
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initializeAuth() {
+      if (!isSupabaseEnabled) {
+        if (isMounted) setIsCheckingAuth(false);
+        return;
+      }
+
+      const supabase = getBrowserSupabase();
+      if (!supabase) {
+        if (isMounted) setIsCheckingAuth(false);
+        return;
+      }
+
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (isMounted) {
+          if (data.session?.user) {
+            // Fetch live profile from Supabase profiles table
+            const { data: dbProfile } = await supabase
+              .from('profiles')
+              .select('id, email, role, approval_status')
+              .eq('id', data.session.user.id)
+              .maybeSingle();
+
+            const resolvedRole = dbProfile?.role || 'user';
+
+            setSessionUser({
+              email: data.session.user.email || dbProfile?.email || 'Authenticated User',
+              id: data.session.user.id,
+              role: resolvedRole,
+            });
+          } else {
+            setSessionUser(null);
+          }
+          setIsCheckingAuth(false);
+        }
+      } catch (err) {
+        console.error('Failed to get Supabase session:', err);
+        if (isMounted) setIsCheckingAuth(false);
+      }
+    }
+
+    initializeAuth();
+
+    if (isSupabaseEnabled) {
+      const supabase = getBrowserSupabase();
+      if (supabase) {
+        const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+          if (isMounted) {
+            if (session?.user) {
+              const { data: dbProfile } = await supabase
+                .from('profiles')
+                .select('id, email, role, approval_status')
+                .eq('id', session.user.id)
+                .maybeSingle();
+
+              const resolvedRole = dbProfile?.role || 'user';
+
+              setSessionUser({
+                email: session.user.email || dbProfile?.email || 'Authenticated User',
+                id: session.user.id,
+                role: resolvedRole,
+              });
+            } else {
+              setSessionUser(null);
+            }
+          }
+        });
+
+        return () => {
+          isMounted = false;
+          authListener.subscription.unsubscribe();
+        };
+      }
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleSignOut = async () => {
+    if (isSupabaseEnabled) {
+      const supabase = getBrowserSupabase();
+      if (supabase) {
+        await supabase.auth.signOut();
+      }
+    }
+    // Clear auth helper cookies and localStorage
+    document.cookie = 'sb-access-token=; path=/; max-age=0; SameSite=Lax';
+    document.cookie = 'nexora_user_role=; path=/; max-age=0; SameSite=Lax';
+    document.cookie = 'nexora_user_status=; path=/; max-age=0; SameSite=Lax';
+    document.cookie = 'nexora_onboarding_completed=; path=/; max-age=0; SameSite=Lax';
+    document.cookie = 'nexora_admin_session=; path=/; max-age=0; SameSite=Lax';
+    try {
+      localStorage.removeItem('nexora_admin_session');
+      localStorage.removeItem('nexora_user_role');
+      localStorage.removeItem('nexora_user_status');
+      localStorage.removeItem('nexora_onboarding_completed');
+      localStorage.removeItem('nexora_user_email');
+    } catch {}
+    setSessionUser(null);
+    router.push('/login');
+  };
+
+  const fetchAccountsQueue = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/approvals');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.queue && Array.isArray(json.queue)) {
+          setAccounts(json.queue);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch account approvals:', err);
+    }
+  }, []);
+
+  // Fetch real submissions and dynamic catalog from backend API on mount
+  useEffect(() => {
+    async function fetchAdminData() {
+      try {
+        const res = await fetch('/api/request-access');
+        if (res.ok) {
+          const json = await res.json();
+          if (Array.isArray(json.requests)) {
+            const mapped: AccessRequest[] = json.requests.map((r: any, idx: number) => ({
+              id: r.id || `req-${idx}`,
+              entityTitle:
+                r.entityTitle ||
+                (r.proposalBrief
+                  ? r.proposalBrief.length > 40
+                    ? r.proposalBrief.slice(0, 40) + '...'
+                    : r.proposalBrief
+                  : 'NEXORA Early Access Waitlist'),
+              entityType: r.entityType || (r.proposalBrief ? 'challenge' : 'platform'),
+              requesterName: r.name || r.requesterName || 'Applicant',
+              requesterOrg: r.organization || r.requesterOrg || 'Independent Entity',
+              requesterEmail: r.email || r.requesterEmail || '',
+              purpose:
+                r.purpose ||
+                (r.proposalBrief ? 'Pilot Due Diligence' : 'Early Access Onboarding'),
+              ndaStatus: r.ndaStatus || 'Pending Signature',
+              dateRequested: r.createdAt
+                ? r.createdAt.split('T')[0]
+                : r.dateRequested || new Date().toISOString().split('T')[0],
+              status: r.status || 'Pending',
+            }));
+            setRequests(mapped);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch requests in Admin console:', err);
+      }
+
+      try {
+        const catRes = await fetch('/api/catalog');
+        if (catRes.ok) {
+          const catJson = await catRes.json();
+          if (Array.isArray(catJson.catalog) && catJson.catalog.length > 0) {
+            const mappedCatalog: AdminItem[] = catJson.catalog.map((c: any) => ({
+              id: c.id,
+              type: c.type || 'technology',
+              title: c.title,
+              category: c.category || 'Deep Tech',
+              organization: c.organization || 'Independent Innovation Lab',
+              trl: c.trl,
+              budget: c.budget,
+              status: c.status || 'Active',
+              dateAdded: c.createdAt ? c.createdAt.split('T')[0] : new Date().toISOString().split('T')[0],
+              verifiedBy: 'Curator Manual Entry',
+              accessCount: 0,
+            }));
+
+            setEntities((prev) => {
+              const existingIds = new Set(prev.map((e) => e.id));
+              const newToAdd = mappedCatalog.filter((item) => !existingIds.has(item.id));
+              return [...newToAdd, ...prev];
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch catalog in Admin console:', err);
+      }
+
+      await fetchAccountsQueue();
+    }
+    
+    fetchAdminData();
+  }, [fetchAccountsQueue]);
 
   // New Entity Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -364,9 +598,10 @@ export default function AdminPage() {
       if (!searchQuery) return true;
       const q = searchQuery.toLowerCase();
       return (
-        req.entityTitle.toLowerCase().includes(q) ||
-        req.requesterName.toLowerCase().includes(q) ||
-        req.requesterOrg.toLowerCase().includes(q)
+        (req.entityTitle || '').toLowerCase().includes(q) ||
+        (req.requesterName || '').toLowerCase().includes(q) ||
+        (req.requesterOrg || '').toLowerCase().includes(q) ||
+        (req.requesterEmail || '').toLowerCase().includes(q)
       );
     });
   }, [requests, searchQuery]);
@@ -404,7 +639,43 @@ export default function AdminPage() {
     showToast(`Access Request ${id} has been ${action}`);
   };
 
-  const handleCreateSubmit = (e: React.FormEvent) => {
+  const handleAccountDecision = async (id: string, decision: 'approved' | 'rejected') => {
+    setIsProcessingAccount(id);
+    let reason = '';
+    if (decision === 'rejected') {
+      const input = prompt('Optional: Provide a reason for rejection (for audit logs)');
+      if (input !== null) {
+        reason = input;
+      } else {
+        setIsProcessingAccount(null);
+        return; // user cancelled prompt
+      }
+    }
+
+    try {
+      const res = await fetch('/api/admin/approvals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: id, decision, reason })
+      });
+      const data = await res.json();
+      
+      if (res.ok && data.success) {
+        showToast(`Account successfully ${decision}`);
+        await fetchAccountsQueue(); // refresh queue from backend
+      } else {
+        alert(`Failed to update account: ${data.error || 'Unknown error'}`);
+      }
+    } catch (err: any) {
+      alert(`Network error updating account: ${err.message}`);
+    } finally {
+      setIsProcessingAccount(null);
+    }
+  };
+
+  const [isSubmittingEntity, setIsSubmittingEntity] = useState(false);
+
+  const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newEntity.title || !newEntity.category || !newEntity.organization) {
       showToast('Please fill in all mandatory fields');
@@ -417,7 +688,7 @@ export default function AdminPage() {
       .replace(/-+/g, '-')
       .slice(0, 24)}`;
 
-    const created: AdminItem = {
+    const itemPayload = {
       id: generatedId,
       type: newEntity.type,
       title: newEntity.title,
@@ -426,23 +697,58 @@ export default function AdminPage() {
       trl: newEntity.type === 'technology' || newEntity.type === 'startup' ? newEntity.trl : undefined,
       budget: newEntity.type === 'challenge' ? newEntity.budget || '€250,000 Pilot Allocation' : undefined,
       status: newEntity.status,
-      dateAdded: new Date().toISOString().split('T')[0],
-      verifiedBy: 'Curator Manual Entry',
-      accessCount: 0,
     };
 
-    setEntities((prev) => [created, ...prev]);
-    setIsModalOpen(false);
-    setNewEntity({
-      type: 'technology',
-      title: '',
-      category: '',
-      organization: '',
-      trl: 6,
-      budget: '',
-      status: 'Active',
-    });
-    showToast(`Registered new entity: ${created.title}`);
+    setIsSubmittingEntity(true);
+
+    try {
+      const response = await fetch('/api/catalog', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(itemPayload),
+      });
+
+      if (response.status === 201 || response.ok) {
+        const responseJson = await response.json();
+        const saved = responseJson.data || itemPayload;
+
+        const created: AdminItem = {
+          id: saved.id || generatedId,
+          type: saved.type || newEntity.type,
+          title: saved.title || newEntity.title,
+          category: saved.category || newEntity.category,
+          organization: saved.organization || newEntity.organization,
+          trl: saved.trl,
+          budget: saved.budget,
+          status: saved.status || newEntity.status,
+          dateAdded: new Date().toISOString().split('T')[0],
+          verifiedBy: 'Curator Manual Entry',
+          accessCount: 0,
+        };
+
+        setEntities((prev) => [created, ...prev]);
+        setIsModalOpen(false);
+        setNewEntity({
+          type: 'technology',
+          title: '',
+          category: '',
+          organization: '',
+          trl: 6,
+          budget: '',
+          status: 'Active',
+        });
+        showToast(`Registered new entity: ${created.title}`);
+      } else {
+        showToast('Error registering node on server.');
+      }
+    } catch (err) {
+      console.error('Failed to post new entity to /api/catalog:', err);
+      showToast('Network error while registering entity.');
+    } finally {
+      setIsSubmittingEntity(false);
+    }
   };
 
   const exportRegistryData = () => {
@@ -457,6 +763,130 @@ export default function AdminPage() {
     showToast('Registry catalog exported as JSON');
   };
 
+  // Auth Check Loading State
+  if ((isCheckingAuth || isAuthLoading) && !isAdmin) {
+    return (
+      <div className="min-h-[85vh] bg-neutral-950 flex flex-col items-center justify-center p-4 space-y-4">
+        <div className="w-8 h-8 rounded-full border-2 border-cyan-500 border-t-transparent animate-spin" />
+        <div className="text-xs font-mono text-neutral-400">Verifying curator clearance with security gateway...</div>
+      </div>
+    );
+  }
+
+  // If Admin clearance is verified, bypass both the login gate and clearance mismatch gate!
+  if (!isAdmin) {
+    // Unauthenticated State
+    if (!sessionUser && !authUser) {
+      return (
+        <div className="min-h-[85vh] bg-neutral-950 flex items-center justify-center p-4 sm:p-6 text-neutral-100">
+          <div className="max-w-md w-full bg-neutral-900 border border-neutral-800 rounded-2xl p-6 sm:p-8 space-y-6 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-rose-950/80 border border-rose-800 flex items-center justify-center mx-auto text-rose-400">
+              <Lock className="w-6 h-6" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-xl font-bold tracking-tight">Curator Authentication Required</h2>
+              <p className="text-xs text-neutral-400 leading-relaxed">
+                This terminal is protected by NEXORA cryptographic access controls. You must authenticate with an authorized curator account to access the administration portal.
+              </p>
+            </div>
+            <div className="pt-2 flex flex-col gap-2.5">
+              <Link
+                href="/login?redirect=/admin"
+                className="w-full py-2.5 px-4 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-neutral-950 text-xs font-semibold font-mono uppercase tracking-wider flex items-center justify-center gap-2 transition-colors"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>Authenticate as Curator</span>
+              </Link>
+              <Link
+                href="/"
+                className="w-full py-2.5 px-4 rounded-xl bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-neutral-300 text-xs font-mono flex items-center justify-center gap-2 transition-colors"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Return to Public Platform</span>
+              </Link>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Insufficient Clearance State (Authenticated as Researcher, Enterprise Sponsor, or Guest)
+    const currentRole = sessionUser?.role || authProfile?.role || 'user';
+    const currentEmail = sessionUser?.email || authUser?.email || 'Authenticated User';
+    const roleLabel =
+      currentRole === 'advisor'
+        ? 'Technical Advisor'
+        : currentRole === 'company' || currentRole === 'enterprise'
+        ? 'Corporate Sponsor'
+        : currentRole === 'researcher'
+        ? 'Research Fellow'
+        : 'Innovator';
+
+    return (
+      <div className="min-h-[85vh] bg-neutral-950 flex items-center justify-center p-4 sm:p-6 text-neutral-100">
+        <div className="max-w-lg w-full bg-neutral-900 border border-neutral-800 rounded-2xl p-6 sm:p-8 space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-amber-950/80 border border-amber-800/80 flex items-center justify-center text-amber-400 shrink-0">
+              <ShieldCheck className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-950/60 border border-amber-600/40 text-amber-300 text-[10px] font-mono uppercase tracking-wider">
+                Clearance Mismatch
+              </div>
+              <h2 className="text-xl font-bold tracking-tight text-white mt-1">Admin Portal Access Restricted</h2>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 space-y-2 text-xs font-mono">
+            <div className="flex items-center justify-between text-neutral-400">
+              <span>Active Account:</span>
+              <span className="text-white font-semibold truncate max-w-[200px]">{currentEmail}</span>
+            </div>
+            <div className="flex items-center justify-between text-neutral-400">
+              <span>Current Clearance:</span>
+              <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-semibold">{roleLabel}</span>
+            </div>
+            <div className="flex items-center justify-between text-neutral-400">
+              <span>Required Role:</span>
+              <span className="px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800 font-semibold">Curator (admin)</span>
+            </div>
+          </div>
+
+          <p className="text-xs text-neutral-400 leading-relaxed">
+            The Curator Console is strictly reserved for platform administrators overseeing deep-tech registry governance, patent verification workflows, and bilateral NDA approvals. Your current tier has full access to the research and innovation workspaces below.
+          </p>
+
+          <div className="pt-2 flex flex-col gap-2.5">
+            <Link
+              href="/dashboard"
+              className="w-full py-2.5 px-4 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-neutral-950 text-xs font-semibold font-mono uppercase tracking-wider flex items-center justify-center gap-2 transition-colors shadow-lg shadow-cyan-500/10"
+            >
+              <GraduationCap className="w-4 h-4" />
+              <span>Go to {roleLabel} Workspace →</span>
+            </Link>
+            <div className="grid grid-cols-2 gap-2">
+              <Link
+                href="/login?redirect=/admin"
+                className="py-2.5 px-3 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-mono flex items-center justify-center gap-1.5 transition-colors text-center"
+              >
+                <KeyRound className="w-3.5 h-3.5 text-neutral-400" />
+                <span>Switch Account</span>
+              </Link>
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="py-2.5 px-3 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-500/30 text-red-300 text-xs font-mono flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Sign Out</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col selection:bg-cyan-500/20 selection:text-cyan-200">
       {/* Toast Alert Notification */}
@@ -470,68 +900,70 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* Top Header */}
-      <header
-        id="admin-header"
-        className="sticky top-0 z-40 border-b border-neutral-800/90 bg-neutral-950/95 backdrop-blur-md"
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <Link
-              id="back-home-btn"
-              href="/"
-              className="inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-neutral-100 transition-colors p-1.5 rounded-lg hover:bg-neutral-900"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span className="hidden sm:inline">Platform</span>
-            </Link>
-
-            <div className="h-4 w-px bg-neutral-800" />
-
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-cyan-950/80 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
-                <Shield className="w-4 h-4" />
+      {/* Curator Top Navigation / Command Bar */}
+      <header className="border-b border-neutral-800 bg-neutral-900/30 backdrop-blur-md sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-cyan-950 border border-cyan-500/40 text-cyan-400">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-sm font-bold font-mono text-neutral-100 tracking-wide uppercase">
+                  NEXORA Curator Registry Console
+                </h1>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center gap-1 font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>{isSupabaseEnabled ? 'Supabase Auth' : 'Local Dev'}</span>
+                </span>
               </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold tracking-wider font-mono text-neutral-100">
-                    NEXORA
-                  </span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-950 border border-cyan-800 text-cyan-300 font-bold">
-                    Curator Console
-                  </span>
-                </div>
-                <div className="text-[11px] text-neutral-400">Registry & Asset Management</div>
-              </div>
+              <p className="text-[11px] text-neutral-400 font-mono mt-0.5">
+                Deep-tech node governance, verification workflows, and bilateral NDA review
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center flex-wrap gap-2 w-full sm:w-auto justify-end">
+            {(sessionUser?.email || authUser?.email || authProfile?.email) && (
+              <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-neutral-900 border border-neutral-800 text-[11px] font-mono text-neutral-300">
+                <UserCheck className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="text-neutral-400">Curator:</span>
+                <span className="text-cyan-300 font-semibold">
+                  {sessionUser?.email || authUser?.email || authProfile?.email || 'Platform Curator'}
+                </span>
+              </div>
+            )}
+
             <button
               type="button"
               onClick={exportRegistryData}
-              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-xs font-medium text-neutral-300 transition-colors"
+              className="px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-xs font-mono text-neutral-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Export Registry JSON"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Export JSON</span>
             </button>
 
-            <Link
-              href="/explore"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-xs font-medium text-neutral-300 transition-colors"
-            >
-              <Eye className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="hidden md:inline">View Catalog</span>
-            </Link>
-
             <button
               type="button"
               onClick={() => setIsModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-neutral-950 text-xs font-semibold transition-colors"
+              className="px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-neutral-950 text-xs font-semibold font-mono flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Register Node</span>
             </button>
+
+            {(isSupabaseEnabled || sessionUser) && (
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-rose-950/60 border border-neutral-800 hover:border-rose-800 text-xs font-mono text-neutral-400 hover:text-rose-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Sign Out of Curator Console"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Sign Out</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -670,6 +1102,19 @@ export default function AdminPage() {
                 <Mail className="w-3.5 h-3.5 text-amber-400" />
                 <span>Access Requests ({requests.filter((r) => r.status === 'Pending').length})</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('accounts')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-medium font-mono flex items-center gap-2 transition-colors ${
+                  activeTab === 'accounts'
+                    ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800 font-semibold'
+                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
+                }`}
+              >
+                <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Accounts ({accounts.filter(a => a.approval_status === 'pending' || a.status === 'pending').length})</span>
+              </button>
             </div>
 
             {/* Quick Actions Counter */}
@@ -721,7 +1166,7 @@ export default function AdminPage() {
         </section>
 
         {/* Tab 1-5: Entities Table View */}
-        {activeTab !== 'requests' ? (
+        {activeTab !== 'requests' && activeTab !== 'accounts' ? (
           <section id="entities-table-section" className="space-y-4">
             <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 overflow-hidden">
               <div className="overflow-x-auto">
@@ -856,7 +1301,7 @@ export default function AdminPage() {
               </div>
             </div>
           </section>
-        ) : (
+        ) : activeTab === 'requests' ? (
           /* Tab 6: Pending Access Requests */
           <section id="access-requests-section" className="space-y-4">
             <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 overflow-hidden">
@@ -949,6 +1394,94 @@ export default function AdminPage() {
                                 >
                                   <X className="w-3 h-3" />
                                   <span>Decline</span>
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] font-mono text-neutral-500">
+                                Decision Recorded
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        ) : (
+          /* Tab 7: Accounts */
+          <section id="accounts-approval-section" className="space-y-4">
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-neutral-800 bg-neutral-950/60 font-mono text-neutral-400">
+                    <tr>
+                      <th className="py-3.5 px-4 font-semibold">User Details</th>
+                      <th className="py-3.5 px-4 font-semibold">Account Role</th>
+                      <th className="py-3.5 px-4 font-semibold">Status</th>
+                      <th className="py-3.5 px-4 font-semibold text-right">Review Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-800/60">
+                    {accounts.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="py-12 text-center text-neutral-500 font-mono">
+                          No pending account approvals.
+                        </td>
+                      </tr>
+                    ) : (
+                      accounts.map((acc) => (
+                        <tr key={acc.id} className="hover:bg-neutral-900/60 transition-colors">
+                          <td className="py-3.5 px-4">
+                            <div className="font-semibold text-neutral-100">{acc.full_name}</div>
+                            <div className="text-neutral-400 text-[11px]">{acc.company_name || 'No Company'}</div>
+                            <div className="text-cyan-400 font-mono text-[10px] mt-0.5">
+                              {acc.email}
+                            </div>
+                          </td>
+
+                          <td className="py-3.5 px-4">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-neutral-800 text-neutral-200 border border-neutral-700 capitalize">
+                              {acc.role}
+                            </span>
+                          </td>
+
+                          <td className="py-3.5 px-4">
+                            <span
+                              className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${
+                                acc.approval_status === 'approved' || acc.status === 'approved'
+                                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
+                                  : acc.approval_status === 'rejected' || acc.status === 'rejected'
+                                  ? 'bg-rose-950 text-rose-300 border border-rose-700'
+                                  : 'bg-amber-950 text-amber-300 border border-amber-700'
+                              }`}
+                            >
+                              {acc.approval_status || acc.status}
+                            </span>
+                          </td>
+
+                          <td className="py-3.5 px-4 text-right">
+                            {acc.approval_status === 'pending' || acc.status === 'pending' ? (
+                              <div className="inline-flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleAccountDecision(acc.id, 'approved')}
+                                  disabled={isProcessingAccount === acc.id}
+                                  className="px-2.5 py-1 rounded bg-emerald-500 hover:bg-emerald-400 text-neutral-950 text-[11px] font-semibold transition-colors flex items-center gap-1 disabled:opacity-50"
+                                >
+                                  {isProcessingAccount === acc.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                                  <span>Approve</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAccountDecision(acc.id, 'rejected')}
+                                  disabled={isProcessingAccount === acc.id}
+                                  className="px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-rose-300 text-[11px] font-medium transition-colors flex items-center gap-1 disabled:opacity-50"
+                                >
+                                  {isProcessingAccount === acc.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                                  <span>Reject</span>
                                 </button>
                               </div>
                             ) : (
@@ -1138,10 +1671,11 @@ export default function AdminPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-neutral-950 text-xs font-semibold transition-colors flex items-center gap-1.5"
+                  disabled={isSubmittingEntity}
+                  className="px-5 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-neutral-950 text-xs font-semibold transition-colors flex items-center gap-1.5"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Commit to Registry</span>
+                  <span>{isSubmittingEntity ? 'Publishing...' : 'Commit to Registry'}</span>
                 </button>
               </div>
             </form>

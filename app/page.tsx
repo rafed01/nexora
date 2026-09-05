@@ -84,172 +84,36 @@ export default function LandingPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [emailSubmitted, setEmailSubmitted] = useState(false);
   const [emailInput, setEmailInput] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState<'architecture' | 'roadmap' | 'runtime'>('architecture');
 
-  const handleCtaSubmit = (e: React.FormEvent) => {
+  const handleCtaSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (emailInput.trim()) {
-      setEmailSubmitted(true);
-      setEmailInput('');
+    if (!emailInput.trim()) return;
+
+    setIsSubmitting(true);
+    try {
+      const response = await fetch('/api/request-access', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: emailInput.trim() }),
+      });
+
+      if (response.ok) {
+        setEmailSubmitted(true);
+        setEmailInput('');
+      }
+    } catch (error) {
+      console.error('Error submitting access request:', error);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col selection:bg-cyan-500/20 selection:text-cyan-200">
-      {/* Top Navigation Bar */}
-      <header
-        id="navbar-header"
-        className="sticky top-0 z-50 border-b border-neutral-800/80 bg-neutral-950/90 backdrop-blur-md"
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div
-              id="brand-logo-badge"
-              className="w-9 h-9 rounded-lg bg-neutral-900 border border-neutral-700/80 flex items-center justify-center text-cyan-400 shadow-sm"
-            >
-              <Cpu className="w-5 h-5" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-lg font-semibold tracking-wider text-neutral-100 font-mono">
-                NEXORA
-              </span>
-              <span className="text-[11px] text-neutral-400 hidden sm:inline">
-                Technology Innovation Platform
-              </span>
-            </div>
-          </div>
-
-          {/* Desktop Nav Links */}
-          <nav id="desktop-navigation" className="hidden md:flex items-center gap-7 text-sm font-medium text-neutral-400">
-            <a href="#hero" className="hover:text-neutral-100 transition-colors">
-              Overview
-            </a>
-            <Link href="/explore" className="text-neutral-400 hover:text-neutral-100 font-medium transition-colors">
-              Discovery
-            </Link>
-            <Link href="/challenges" className="text-neutral-400 hover:text-neutral-100 font-medium transition-colors">
-              Challenges
-            </Link>
-            <Link href="/reports" className="text-neutral-400 hover:text-neutral-100 font-medium transition-colors">
-              Reports
-            </Link>
-            <Link href="/ai-scout" className="text-cyan-400 hover:text-cyan-300 font-medium transition-colors flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>AI Scout</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 border border-cyan-800 text-cyan-300 font-mono">Live</span>
-            </Link>
-            <Link href="/admin" className="text-neutral-400 hover:text-neutral-100 font-medium transition-colors">
-              Admin
-            </Link>
-            <a href="#features" className="hover:text-neutral-100 transition-colors">
-              Platform
-            </a>
-          </nav>
-
-          {/* Action CTA Button */}
-          <div className="hidden md:flex items-center gap-4">
-            <Link
-              id="btn-nav-action"
-              href="/dashboard"
-              className="inline-flex items-center justify-center text-xs font-semibold px-4 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-neutral-950 transition-colors shadow-sm cursor-pointer whitespace-nowrap"
-            >
-              Launch Console
-            </Link>
-          </div>
-
-          {/* Mobile Menu Toggle */}
-          <div className="flex md:hidden">
-            <button
-              id="mobile-menu-toggle-btn"
-              type="button"
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="p-2 rounded-md text-neutral-400 hover:text-neutral-100 hover:bg-neutral-900"
-              aria-label="Toggle navigation menu"
-            >
-              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-            </button>
-          </div>
-        </div>
-
-        {/* Mobile Dropdown */}
-        {mobileMenuOpen && (
-          <div id="mobile-nav-panel" className="md:hidden border-t border-neutral-800 bg-neutral-950 px-4 pt-3 pb-5 space-y-3">
-            <a
-              href="#hero"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block text-sm font-medium text-neutral-300 hover:text-cyan-400 py-1"
-            >
-              Overview
-            </a>
-            <Link
-              href="/explore"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block text-sm font-medium text-neutral-300 hover:text-cyan-400 py-1"
-            >
-              Discovery Dashboard
-            </Link>
-            <Link
-              href="/challenges"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block text-sm font-medium text-neutral-300 hover:text-cyan-400 py-1"
-            >
-              Challenges
-            </Link>
-            <Link
-              href="/reports"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block text-sm font-medium text-neutral-300 hover:text-cyan-400 py-1"
-            >
-              Reports & Publications
-            </Link>
-            <Link
-              href="/ai-scout"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block text-sm font-medium text-cyan-400 hover:text-cyan-300 py-1"
-            >
-              AI Scout Engine
-            </Link>
-            <Link
-              href="/admin"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block text-sm font-medium text-neutral-300 hover:text-cyan-400 py-1"
-            >
-              Curator Admin Console
-            </Link>
-            <a
-              href="#features"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block text-sm font-medium text-neutral-300 hover:text-cyan-400 py-1"
-            >
-              Platform
-            </a>
-            <a
-              href="#architecture-flow"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block text-sm font-medium text-neutral-300 hover:text-cyan-400 py-1"
-            >
-              Architecture
-            </a>
-            <a
-              href="#cta-section"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block text-sm font-medium text-neutral-300 hover:text-cyan-400 py-1"
-            >
-              Get Started
-            </a>
-            <div className="pt-2">
-              <a
-                href="#cta-section"
-                onClick={() => setMobileMenuOpen(false)}
-                className="w-full inline-flex items-center justify-center text-xs font-semibold px-4 py-2.5 rounded-lg bg-cyan-500 text-neutral-950 font-medium"
-              >
-                Access Platform
-              </a>
-            </div>
-          </div>
-        )}
-      </header>
-
       {/* Main Content Area */}
       <main className="flex-1">
         {/* Hero Section */}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI, Type } from '@google/genai';
+import { getCatalog, CatalogItem } from '@/lib/db';
 
 interface ScoutingRecommendation {
   id: string;
@@ -33,14 +34,65 @@ function getGeminiClient(): GoogleGenAI | null {
     return null;
   }
   if (!aiClient) {
-    aiClient = new GoogleGenAI({ apiKey });
+    aiClient = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
   }
   return aiClient;
 }
 
-// Fallback intelligence synthesizer for verified deep-tech domains
-function generateHeuristicResponse(query: string): ScoutingResponse {
+// Fallback intelligence synthesizer for verified deep-tech domains, enriched with live catalog entities
+function generateHeuristicResponse(query: string, customCatalog: CatalogItem[] = []): ScoutingResponse {
   const lowerQuery = query.toLowerCase();
+  const queryTokens = lowerQuery.split(/[\s,.-]+/).filter((t) => t.length > 2);
+
+  // Extract matching custom catalog entities
+  const matchingCustomRecs: ScoutingRecommendation[] = [];
+  if (Array.isArray(customCatalog) && customCatalog.length > 0) {
+    for (const item of customCatalog) {
+      const itemText = `${item.title || ''} ${item.category || ''} ${item.organization || ''} ${item.description || ''} ${(item.tags || []).join(' ')}`.toLowerCase();
+      const isMatch =
+        queryTokens.length === 0 ||
+        queryTokens.some((token) => itemText.includes(token)) ||
+        lowerQuery.includes(item.title.toLowerCase()) ||
+        (item.category && lowerQuery.includes(item.category.toLowerCase()));
+
+      if (isMatch) {
+        matchingCustomRecs.push({
+          id: item.id || `custom-${Math.random().toString(36).slice(2, 7)}`,
+          type: (['technology', 'startup', 'expert', 'challenge'].includes(item.type || '')
+            ? item.type
+            : 'technology') as 'technology' | 'startup' | 'expert' | 'challenge',
+          title: item.title,
+          organization: item.organization || 'NEXORA Registered Node',
+          category: item.category || 'Deep Tech',
+          trl: typeof item.trl === 'number' ? item.trl : Number(item.trl) || 6,
+          summary:
+            item.description ||
+            `${item.title} registered live in the NEXORA global innovation network.`,
+          keyMetrics:
+            Array.isArray(item.metrics) && item.metrics.length > 0
+              ? item.metrics
+              : [
+                  { label: 'Readiness', value: `TRL ${item.trl || 6}` },
+                  { label: 'Status', value: item.status || 'Active Node' },
+                  { label: 'Registry', value: 'Live' },
+                ],
+          relevanceScore: 97,
+          relevanceRationale: `Directly matches active platform registry node in the ${item.category || 'Deep Tech'} domain.`,
+          recommendedAction: 'Engage registry node via NEXORA bilateral due diligence channel.',
+          link: item.type === 'challenge' ? '/challenges' : '/explore',
+        });
+      }
+    }
+  }
+
+  let baseResponse: ScoutingResponse;
 
   // 1. Solid-State Batteries & Advanced Energy Storage
   if (
@@ -51,11 +103,11 @@ function generateHeuristicResponse(query: string): ScoutingResponse {
     lowerQuery.includes('anode') ||
     lowerQuery.includes('energy storage')
   ) {
-    return {
+    baseResponse = {
       query,
       detectedDomain: 'Advanced Energy Storage & Electrochemistry',
       executiveSummary:
-        'Found 3 high-relevance entities addressing the solid-state electrolyte interface impedance and dry-coating scalability. Sulfide-based argyrodite chemistries exhibit the highest ionic conductivity (>14 mS/cm), while solvent-free roll-to-roll calendaring is critical for gigafactory cost parity.',
+        'Found high-relevance entities addressing the solid-state electrolyte interface impedance and dry-coating scalability. Sulfide-based argyrodite chemistries exhibit the highest ionic conductivity (>14 mS/cm), while solvent-free roll-to-roll calendaring is critical for gigafactory cost parity.',
       keyVectors: [
         'Argyrodite (Li₆PS₅Cl) superionic conductivity',
         'Dry electrode web calendering (<5% thickness tolerance)',
@@ -125,10 +177,8 @@ function generateHeuristicResponse(query: string): ScoutingResponse {
       ],
       analysisTimeMs: 420,
     };
-  }
-
-  // 2. Optical Computing & Silicon Photonics
-  if (
+  } else if (
+    // 2. Optical Computing & Silicon Photonics
     lowerQuery.includes('photonic') ||
     lowerQuery.includes('optical') ||
     lowerQuery.includes('power wall') ||
@@ -136,11 +186,11 @@ function generateHeuristicResponse(query: string): ScoutingResponse {
     lowerQuery.includes('sub-femtojoule') ||
     lowerQuery.includes('cpo')
   ) {
-    return {
+    baseResponse = {
       query,
       detectedDomain: 'Optical Computing & Silicon Photonics',
       executiveSummary:
-        'Identified 3 top-tier deep-tech nodes addressing the AI datacenter power wall through analog matrix multiplication via photonic interference. Co-packaged optics (CPO) and sub-picosecond Mach-Zehnder meshes offer 10x-50x energy efficiency gains over digital electrical GPUs.',
+        'Identified top-tier deep-tech nodes addressing the AI datacenter power wall through analog matrix multiplication via photonic interference. Co-packaged optics (CPO) and sub-picosecond Mach-Zehnder meshes offer 10x-50x energy efficiency gains over digital electrical GPUs.',
       keyVectors: [
         'Mach-Zehnder Interferometer (MZI) meshes',
         'Co-packaged optics (CPO) integration (<0.8 pJ/bit)',
@@ -210,10 +260,8 @@ function generateHeuristicResponse(query: string): ScoutingResponse {
       ],
       analysisTimeMs: 380,
     };
-  }
-
-  // 3. Quantum Error Mitigation & NISQ Systems
-  if (
+  } else if (
+    // 3. Quantum Error Mitigation & NISQ Systems
     lowerQuery.includes('quantum') ||
     lowerQuery.includes('qubit') ||
     lowerQuery.includes('nisq') ||
@@ -221,11 +269,11 @@ function generateHeuristicResponse(query: string): ScoutingResponse {
     lowerQuery.includes('vqe') ||
     lowerQuery.includes('fault-tolerant')
   ) {
-    return {
+    baseResponse = {
       query,
       detectedDomain: 'Quantum Computing & Error Mitigation',
       executiveSummary:
-        'Audited 3 verified candidates executing error-resilient quantum algorithms on 100+ qubit NISQ processors. Tensor-network decomposition bridges the decoherence gap ahead of full fault-tolerant physical error correction.',
+        'Audited verified candidates executing error-resilient quantum algorithms on 100+ qubit NISQ processors. Tensor-network decomposition bridges the decoherence gap ahead of full fault-tolerant physical error correction.',
       keyVectors: [
         'Matrix Product State (MPS) tensor network noise cancellation',
         'Software-only error mitigation without qubit count overhead',
@@ -295,10 +343,8 @@ function generateHeuristicResponse(query: string): ScoutingResponse {
       ],
       analysisTimeMs: 410,
     };
-  }
-
-  // 4. Autonomous Swarm Robotics & Aerospace
-  if (
+  } else if (
+    // 4. Autonomous Swarm Robotics & Aerospace
     lowerQuery.includes('swarm') ||
     lowerQuery.includes('aerospace') ||
     lowerQuery.includes('aerodynamic') ||
@@ -307,11 +353,11 @@ function generateHeuristicResponse(query: string): ScoutingResponse {
     lowerQuery.includes('glider') ||
     lowerQuery.includes('drone')
   ) {
-    return {
+    baseResponse = {
       query,
       detectedDomain: 'Autonomous Aerospace & Swarm Robotics',
       executiveSummary:
-        'Mapped 3 verified nodes advancing persistent high-altitude pseudo-satellites (HAPS) and decentralized swarm formation control. Aerodynamic wake-vortex harvesting and Byzantine-tolerant consensus enable 60+ day continuous flight in contested airspace.',
+        'Mapped verified nodes advancing persistent high-altitude pseudo-satellites (HAPS) and decentralized swarm formation control. Aerodynamic wake-vortex harvesting and Byzantine-tolerant consensus enable 60+ day continuous flight in contested airspace.',
       keyVectors: [
         'Byzantine Fault Tolerant (BFT) decentralized flight consensus',
         'Autonomous wake-vortex harvesting reducing aerodynamic drag by 28%',
@@ -361,10 +407,8 @@ function generateHeuristicResponse(query: string): ScoutingResponse {
       ],
       analysisTimeMs: 390,
     };
-  }
-
-  // 5. Generative Biotechnology & Protein Engineering
-  if (
+  } else if (
+    // 5. Generative Biotechnology & Protein Engineering
     lowerQuery.includes('bio') ||
     lowerQuery.includes('enzyme') ||
     lowerQuery.includes('protein') ||
@@ -373,11 +417,11 @@ function generateHeuristicResponse(query: string): ScoutingResponse {
     lowerQuery.includes('recycling') ||
     lowerQuery.includes('plastic')
   ) {
-    return {
+    baseResponse = {
       query,
       detectedDomain: 'Generative Protein Engineering & Biocatalysis',
       executiveSummary:
-        'Synthesized 3 deep-tech nodes engineering de novo thermostable biocatalysts via SE(3)-equivariant geometric diffusion models, breaking thermal degradation limits at 85°C+ in continuous industrial bioreactors.',
+        'Synthesized deep-tech nodes engineering de novo thermostable biocatalysts via SE(3)-equivariant geometric diffusion models, breaking thermal degradation limits at 85°C+ in continuous industrial bioreactors.',
       keyVectors: [
         'SE(3)-equivariant backbone and side-chain generative diffusion',
         'Thermal stability threshold elevation (+38.5°C over wild-type)',
@@ -427,124 +471,111 @@ function generateHeuristicResponse(query: string): ScoutingResponse {
       ],
       analysisTimeMs: 440,
     };
+  } else {
+    // 6. Default deep-tech multi-domain synthesis
+    baseResponse = {
+      query,
+      detectedDomain: 'Frontier Deep-Tech Systems & Advanced Hardware',
+      executiveSummary: `Synthesized intelligence for "${query}". Evaluated empirical physics benchmarks, verified TRL advancement stages, and cross-referenced with NEXORA's audited deep-tech registry. Selected high-conviction hardware and algorithmic candidates matching your engineering parameters.`,
+      keyVectors: [
+        'Empirical physics & hardware benchmark verification',
+        'Technology Readiness Level (TRL 5–8) progression',
+        'Intellectual property moat & patent freedom-to-operate',
+      ],
+      recommendations: [
+        {
+          id: 'tech-photonic-mpu',
+          type: 'technology',
+          title: 'Photonic Matrix Processing Unit (P-MPU)',
+          organization: 'NEXORA Optoelectronics Core / IMEC Spinout',
+          category: 'Optical Computing',
+          trl: 6,
+          summary:
+            'Silicon-photonic analog matrix accelerator computing GEMM tensor workloads at the speed of light, consuming 42.8 TOPS/W with 0.18 ns latency.',
+          keyMetrics: [
+            { label: 'Energy Eff.', value: '42.8 TOPS/W' },
+            { label: 'Latency', value: '0.18 ns' },
+            { label: 'Clock Speed', value: '100 GHz Opt.' },
+          ],
+          relevanceScore: 96,
+          relevanceRationale:
+            'High operational performance with verified 300mm wafer test reports and low sub-picosecond latency.',
+          recommendedAction: 'Schedule hardware evaluation unit testbed slot for technical benchmark.',
+          link: '/technology/tech-photonic-mpu',
+        },
+        {
+          id: 'tech-solid-state-electrolyte',
+          type: 'technology',
+          title: 'High-Purity Argyrodite Solid Electrolyte (Li₆PS₅Cl)',
+          organization: 'Kyoto Materials Innovation Lab / Tokyo Tech',
+          category: 'Advanced Energy Storage',
+          trl: 7,
+          summary:
+            'Engineered superionic sulfide crystalline powder achieving 14.2 mS/cm ionic conductivity at 25°C, eliminating flammable volatile liquid carbonate solvents.',
+          keyMetrics: [
+            { label: 'Conductivity', value: '14.2 mS/cm' },
+            { label: 'Critical Current', value: '12.5 mA/cm²' },
+            { label: 'Cycle Retention', value: '91% @ 1,200 cyc' },
+          ],
+          relevanceScore: 94,
+          relevanceRationale:
+            'Certified TRL 7 pilot verification with high electrochemical stability and certified cycle endurance.',
+          recommendedAction: 'Request bilateral NDA to review pouch-cell test telemetry.',
+          link: '/technology/tech-solid-state-electrolyte',
+        },
+        {
+          id: 'startup-aetherion',
+          type: 'startup',
+          title: 'Aetherion Dynamics',
+          organization: 'ISAE-SUPAERO & ONERA Spinout',
+          category: 'Autonomous Aerospace & Swarm AI',
+          trl: 7,
+          summary:
+            'High-altitude solar pseudo-satellite gliders utilizing decentralized Byzantine-tolerant swarm autonomy for 60+ day continuous persistent station-keeping.',
+          keyMetrics: [
+            { label: 'Endurance', value: '62 Days' },
+            { label: 'Drag Delta', value: '-28.4%' },
+            { label: 'Link Latency', value: '18 ms' },
+          ],
+          relevanceScore: 92,
+          relevanceRationale:
+            'Proven stratospheric flight records with decentralized swarm formation control IP.',
+          recommendedAction: 'Inquire regarding joint aerospace border or environmental surveillance pilots.',
+          link: '/startup/startup-aetherion',
+        },
+      ],
+      analysisTimeMs: 370,
+    };
   }
 
-  // 6. Default deep-tech multi-domain synthesis
-  return {
-    query,
-    detectedDomain: 'Frontier Deep-Tech Systems & Advanced Hardware',
-    executiveSummary: `Synthesized intelligence for "${query}". Evaluated empirical physics benchmarks, verified TRL advancement stages, and cross-referenced with NEXORA's audited deep-tech registry. Selected high-conviction hardware and algorithmic candidates matching your engineering parameters.`,
-    keyVectors: [
-      'Empirical physics & hardware benchmark verification',
-      'Technology Readiness Level (TRL 5–8) progression',
-      'Intellectual property moat & patent freedom-to-operate',
-    ],
-    recommendations: [
-      {
-        id: 'tech-photonic-mpu',
-        type: 'technology',
-        title: 'Photonic Matrix Processing Unit (P-MPU)',
-        organization: 'NEXORA Optoelectronics Core / IMEC Spinout',
-        category: 'Optical Computing',
-        trl: 6,
-        summary:
-          'Silicon-photonic analog matrix accelerator computing GEMM tensor workloads at the speed of light, consuming 42.8 TOPS/W with 0.18 ns latency.',
-        keyMetrics: [
-          { label: 'Energy Eff.', value: '42.8 TOPS/W' },
-          { label: 'Latency', value: '0.18 ns' },
-          { label: 'Clock Speed', value: '100 GHz Opt.' },
-        ],
-        relevanceScore: 96,
-        relevanceRationale:
-          'High operational performance with verified 300mm wafer test reports and low sub-picosecond latency.',
-        recommendedAction: 'Schedule hardware evaluation unit testbed slot for technical benchmark.',
-        link: '/technology/tech-photonic-mpu',
-      },
-      {
-        id: 'tech-solid-state-electrolyte',
-        type: 'technology',
-        title: 'High-Purity Argyrodite Solid Electrolyte (Li₆PS₅Cl)',
-        organization: 'Kyoto Materials Innovation Lab / Tokyo Tech',
-        category: 'Advanced Energy Storage',
-        trl: 7,
-        summary:
-          'Engineered superionic sulfide crystalline powder achieving 14.2 mS/cm ionic conductivity at 25°C, eliminating flammable volatile liquid carbonate solvents.',
-        keyMetrics: [
-          { label: 'Conductivity', value: '14.2 mS/cm' },
-          { label: 'Critical Current', value: '12.5 mA/cm²' },
-          { label: 'Cycle Retention', value: '91% @ 1,200 cyc' },
-        ],
-        relevanceScore: 94,
-        relevanceRationale:
-          'Certified TRL 7 pilot verification with high electrochemical stability and certified cycle endurance.',
-        recommendedAction: 'Request bilateral NDA to review pouch-cell test telemetry.',
-        link: '/technology/tech-solid-state-electrolyte',
-      },
-      {
-        id: 'startup-aetherion',
-        type: 'startup',
-        title: 'Aetherion Dynamics',
-        organization: 'ISAE-SUPAERO & ONERA Spinout',
-        category: 'Autonomous Aerospace & Swarm AI',
-        trl: 7,
-        summary:
-          'High-altitude solar pseudo-satellite gliders utilizing decentralized Byzantine-tolerant swarm autonomy for 60+ day continuous persistent station-keeping.',
-        keyMetrics: [
-          { label: 'Endurance', value: '62 Days' },
-          { label: 'Drag Delta', value: '-28.4%' },
-          { label: 'Link Latency', value: '18 ms' },
-        ],
-        relevanceScore: 92,
-        relevanceRationale:
-          'Proven stratospheric flight records with decentralized swarm formation control IP.',
-        recommendedAction: 'Inquire regarding joint aerospace border or environmental surveillance pilots.',
-        link: '/startup/startup-aetherion',
-      },
-    ],
-    analysisTimeMs: 370,
-  };
+  // Prepend matching custom catalog nodes to the response
+  if (matchingCustomRecs.length > 0) {
+    const existingIds = new Set(matchingCustomRecs.map((r) => r.id));
+    const dedupedBase = baseResponse.recommendations.filter((r) => !existingIds.has(r.id));
+    baseResponse.recommendations = [...matchingCustomRecs, ...dedupedBase];
+    baseResponse.executiveSummary = `Cross-referenced with live registry items. ${baseResponse.executiveSummary}`;
+  }
+
+  return baseResponse;
 }
 
-// Resilient Gemini invoker that gracefully handles upstream 503 high-demand spikes
+// Resilient Gemini invoker that gracefully queries latest models with fallback
 async function queryGeminiWithFallback(ai: GoogleGenAI, prompt: string, schemaConfig: any): Promise<string | null> {
-  // 1. First attempt with gemini-3.8-flash
-  try {
-    const result = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: prompt,
-      config: schemaConfig,
-    });
-    if (result.text) {
-      return result.text;
-    }
-  } catch (err: any) {
-    const isTransientSpike =
-      err?.status === 503 ||
-      err?.code === 503 ||
-      String(err?.message || '').includes('503') ||
-      String(err?.message || '').includes('high demand') ||
-      String(err?.message || '').includes('UNAVAILABLE') ||
-      String(err?.message || '').includes('Resource has been exhausted');
+  const modelsToTry = ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
 
-    if (isTransientSpike) {
-      console.warn('Gemini 3.8 Flash model experiencing temporary high demand (503). Attempting fallback to gemini-flash-latest...');
-      // 2. Immediate fallback to gemini-flash-latest
-      try {
-        const fallbackResult = await ai.models.generateContent({
-          model: 'gemini-flash-latest',
-          contents: prompt,
-          config: schemaConfig,
-        });
-        if (fallbackResult.text) {
-          return fallbackResult.text;
-        }
-      } catch (fallbackErr: any) {
-        console.warn('Fallback Gemini model also under peak demand. Engaging curated deep-tech intelligence synthesizer.');
-        return null;
+  for (const model of modelsToTry) {
+    try {
+      const result = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: schemaConfig,
+      });
+      if (result.text) {
+        return result.text;
       }
-    } else {
-      console.warn('Gemini query evaluation notice:', err?.message || err);
-      return null;
+    } catch (err: any) {
+      console.warn(`Gemini query notice for ${model}:`, err?.message || err);
+      // Continue to next model
     }
   }
 
@@ -554,6 +585,7 @@ async function queryGeminiWithFallback(ai: GoogleGenAI, prompt: string, schemaCo
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
   let queryStr = '';
+  let liveCatalog: CatalogItem[] = [];
 
   try {
     const body = await req.json();
@@ -566,20 +598,38 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Retrieve live admin-curated entities from local JSON storage
+    try {
+      liveCatalog = await getCatalog();
+    } catch (dbErr) {
+      console.warn('Database access notice while fetching live catalog for AI Scout:', dbErr);
+      liveCatalog = [];
+    }
+
     const ai = getGeminiClient();
 
-    // If no Gemini API key is configured in the environment, use high-fidelity heuristic synthesis
+    // If no Gemini API key is configured in the environment, use high-fidelity heuristic synthesis enriched with catalog
     if (!ai) {
-      const response = generateHeuristicResponse(queryStr);
+      const response = generateHeuristicResponse(queryStr, liveCatalog);
       response.analysisTimeMs = Date.now() - startTime;
       return NextResponse.json(response);
     }
 
-    // Call Gemini with structured schema
+    // Build enriched prompt incorporating live platform nodes
+    let catalogContextSection = '';
+    if (liveCatalog && liveCatalog.length > 0) {
+      catalogContextSection = `
+NEXORA LIVE REGISTERED PLATFORM ENTITIES (Admin Curated in Registry):
+${JSON.stringify(liveCatalog.slice(0, 15), null, 2)}
+
+INSTRUCTION: If any of these live registered entities match or are relevant to the user's query "${queryStr}", prioritize or cross-reference them in your recommendations alongside or within your deep-tech analysis. Maintain exact IDs and links where applicable (e.g. /explore, /technology/[id], /challenges, etc.).
+`;
+    }
+
     const prompt = `You are NEXORA's AI Deep-Tech Scouting Intelligence Engine.
 Analyze the user's natural language scouting query:
 "${queryStr}"
-
+${catalogContextSection}
 Perform deep-tech taxonomy identification, operational readiness assessment, and return 3 to 4 recommended entities adhering to NEXORA's platform architecture:
 - Each entity must be classified as 'technology', 'startup', 'expert', or 'challenge'.
 - Assign realistic Technology Readiness Levels (TRL 1 through 9).
@@ -691,13 +741,13 @@ Perform deep-tech taxonomy identification, operational readiness assessment, and
       }
     }
 
-    // Gracefully serve the verified deep-tech heuristic response
-    const fallback = generateHeuristicResponse(queryStr);
+    // Gracefully serve the verified deep-tech heuristic response with catalog enrichment
+    const fallback = generateHeuristicResponse(queryStr, liveCatalog);
     fallback.analysisTimeMs = Date.now() - startTime;
     return NextResponse.json(fallback);
   } catch (err: any) {
     console.warn('Notice: Serving verified deep-tech intelligence fallback for query:', queryStr);
-    const fallback = generateHeuristicResponse(queryStr || 'Deep-tech frontier intelligence');
+    const fallback = generateHeuristicResponse(queryStr || 'Deep-tech frontier intelligence', liveCatalog);
     fallback.analysisTimeMs = Date.now() - startTime;
     return NextResponse.json(fallback);
   }

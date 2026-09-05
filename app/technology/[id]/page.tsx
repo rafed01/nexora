@@ -767,59 +767,7 @@ export default async function TechnologyDetailPage({
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col selection:bg-cyan-500/20 selection:text-cyan-200">
-      {/* Sticky Global Navigation Header */}
-      <header
-        id="tech-detail-header"
-        className="sticky top-0 z-40 border-b border-neutral-800/90 bg-neutral-950/95 backdrop-blur-md"
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <Link
-              id="back-to-explore-link"
-              href="/explore"
-              className="inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-neutral-100 transition-colors p-1.5 rounded-lg hover:bg-neutral-900"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span>Back to Catalog</span>
-            </Link>
-
-            <div className="h-4 w-px bg-neutral-800" />
-
-            <div className="flex items-center gap-2 text-xs font-mono text-neutral-400">
-              <span className="text-neutral-500">Node ID:</span>
-              <span className="text-cyan-400 font-semibold">{tech.id}</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Link
-              id="header-scout-link"
-              href="/dashboard"
-              className="hidden sm:inline-flex items-center gap-1.5 text-xs font-medium text-neutral-400 hover:text-cyan-300 transition-colors px-3 py-1.5 rounded-lg hover:bg-neutral-900"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-              <span>AI Scout</span>
-            </Link>
-
-            <Link
-              id="header-challenges-link"
-              href="/challenges"
-              className="inline-flex items-center justify-center text-xs font-semibold px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-200 transition-colors"
-            >
-              Related Challenges
-            </Link>
-
-            <a
-              id="btn-request-dossier"
-              href="#contact-dialog"
-              className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-3.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-neutral-950 transition-colors"
-            >
-              <Mail className="w-3.5 h-3.5" />
-              <span>Request Dossier</span>
-            </a>
-          </div>
-        </div>
-      </header>
+      
 
       {/* Main Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-12">

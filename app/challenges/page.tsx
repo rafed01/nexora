@@ -194,13 +194,34 @@ export default function ChallengesPage() {
     };
   }, []);
 
-  const handleApplicationSubmit = (e: React.FormEvent) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleApplicationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (applicantName && applicantEmail && proposalBrief) {
-      setApplicationSubmitted(true);
-      setTimeout(() => {
-        // Reset form after short delay when modal closes
-      }, 500);
+    if (!applicantName || !applicantEmail || !proposalBrief) return;
+
+    setIsSubmitting(true);
+    try {
+      const response = await fetch('/api/request-access', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: applicantName,
+          email: applicantEmail,
+          organization: applicantOrg,
+          proposalBrief,
+        }),
+      });
+
+      if (response.ok) {
+        setApplicationSubmitted(true);
+      }
+    } catch (error) {
+      console.error('Error submitting application:', error);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -215,75 +236,7 @@ export default function ChallengesPage() {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col selection:bg-cyan-500/20 selection:text-cyan-200">
-      {/* Navigation Header */}
-      <header
-        id="challenges-header"
-        className="sticky top-0 z-40 border-b border-neutral-800/90 bg-neutral-950/95 backdrop-blur-md"
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <Link
-              id="back-to-home-link"
-              href="/"
-              className="inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-neutral-100 transition-colors p-1.5 rounded-lg hover:bg-neutral-900"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span className="hidden sm:inline">Overview</span>
-            </Link>
-
-            <div className="h-4 w-px bg-neutral-800" />
-
-            <div className="flex items-center gap-2.5">
-              <div
-                id="challenges-brand-icon"
-                className="w-8 h-8 rounded-lg bg-neutral-900 border border-neutral-700/80 flex items-center justify-center text-cyan-400"
-              >
-                <Briefcase className="w-4 h-4" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-sm font-semibold tracking-wider font-mono text-neutral-100">
-                  NEXORA
-                </span>
-                <span className="text-[10px] text-neutral-400 uppercase tracking-wider">
-                  Challenges & Reports
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Navigation Links */}
-          <nav className="hidden md:flex items-center gap-6 text-xs font-medium text-neutral-400">
-            <Link href="/" className="hover:text-neutral-100 transition-colors">
-              Platform
-            </Link>
-            <Link href="/explore" className="hover:text-neutral-100 transition-colors">
-              Discovery Dashboard
-            </Link>
-            <span className="text-neutral-100 font-semibold">Active Challenges</span>
-            <Link href="/reports" className="hover:text-neutral-100 transition-colors">
-              Reports
-            </Link>
-            <Link href="/ai-scout" className="text-cyan-400 hover:text-cyan-300 transition-colors flex items-center gap-1 font-medium">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>AI Scout</span>
-            </Link>
-            <Link href="/admin" className="hover:text-neutral-100 transition-colors">
-              Admin
-            </Link>
-          </nav>
-
-          <div className="flex items-center gap-3">
-            <Link
-              id="header-scout-action-btn"
-              href="/ai-scout"
-              className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-3.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-neutral-950 transition-colors"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>AI Scout</span>
-            </Link>
-          </div>
-        </div>
-      </header>
+      
 
       {/* Main Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">

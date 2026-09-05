@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Sparkles,
   Search,
@@ -28,7 +29,17 @@ import {
   FileText,
   Activity,
   Zap,
+  Shield,
+  LogOut,
+  User,
+  KeyRound,
 } from 'lucide-react';
+import {
+  getBrowserSupabase,
+  isSupabaseEnabled,
+  UserRole,
+  ROLE_LABELS,
+} from '@/lib/supabaseClient';
 
 interface ScoutResult {
   id: string;
@@ -177,12 +188,69 @@ const INITIAL_ACTIVITIES: ActivityItem[] = [
 ];
 
 export default function DashboardScoutPage() {
+  const router = useRouter();
   const [prompt, setPrompt] = useState('');
   const [isScouting, setIsScouting] = useState(false);
   const [scoutedResults, setScoutedResults] = useState<ScoutResult[]>(INITIAL_RECOMMENDATIONS);
   const [savedItems, setSavedItems] = useState<SavedItem[]>(INITIAL_SAVED_ITEMS);
   const [activities, setActivities] = useState<ActivityItem[]>(INITIAL_ACTIVITIES);
   const [scoutFeedback, setScoutFeedback] = useState<string | null>(null);
+
+  // User Auth & Role State
+  const [userProfile, setUserProfile] = useState<{
+    email?: string;
+    role: UserRole;
+    fullName?: string;
+    organization?: string;
+  }>({
+    role: 'researcher',
+    fullName: 'Research Fellow',
+    organization: 'NEXORA Deep-Tech Network',
+  });
+
+  useEffect(() => {
+    async function loadUser() {
+      if (isSupabaseEnabled) {
+        const supabase = getBrowserSupabase();
+        if (supabase) {
+          const { data } = await supabase.auth.getSession();
+          if (data.session?.user) {
+            const { data: dbProfile } = await supabase
+              .from('profiles')
+              .select('role, full_name, organization, email')
+              .eq('id', data.session.user.id)
+              .maybeSingle();
+
+            setUserProfile({
+              email: data.session.user.email || dbProfile?.email,
+              role: (dbProfile?.role as UserRole) || 'user',
+              fullName: dbProfile?.full_name || data.session.user.email?.split('@')[0] || 'User',
+              organization: dbProfile?.organization || 'Institutional Partner',
+            });
+          }
+        }
+      }
+    }
+    loadUser();
+  }, []);
+
+  const handleSignOut = async () => {
+    if (isSupabaseEnabled) {
+      const supabase = getBrowserSupabase();
+      if (supabase) {
+        await supabase.auth.signOut();
+      }
+    }
+    document.cookie = 'sb-access-token=; path=/; max-age=0; SameSite=Lax';
+    document.cookie = 'nexora_user_role=; path=/; max-age=0; SameSite=Lax';
+    document.cookie = 'nexora_admin_session=; path=/; max-age=0; SameSite=Lax';
+    try {
+      localStorage.removeItem("nexora_admin_session");
+      localStorage.removeItem("nexora_user_role");
+      localStorage.removeItem("nexora_user_email");
+    } catch {}
+    router.push('/login');
+  };
 
   // Handle scouting execution
   const handleExecuteScout = (customPrompt?: string) => {
@@ -372,81 +440,63 @@ export default function DashboardScoutPage() {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col selection:bg-cyan-500/20 selection:text-cyan-200">
-      {/* Top Header */}
-      <header
-        id="dashboard-header"
-        className="sticky top-0 z-40 border-b border-neutral-800/90 bg-neutral-950/95 backdrop-blur-md"
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
+      {/* Top RBAC Command Bar */}
+      <div className="border-b border-neutral-900 bg-neutral-950/80 backdrop-blur-md sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-between text-xs font-mono">
+          <div className="flex items-center gap-3">
             <Link
-              id="back-home-link"
               href="/"
-              className="inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-neutral-100 transition-colors p-1.5 rounded-lg hover:bg-neutral-900"
+              className="inline-flex items-center gap-1.5 text-neutral-400 hover:text-cyan-300 transition-colors"
             >
-              <ArrowLeft className="w-4 h-4" />
-              <span className="hidden sm:inline">Home</span>
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>NEXORA Public</span>
             </Link>
-
-            <div className="h-4 w-px bg-neutral-800" />
-
-            <div className="flex items-center gap-2.5">
-              <div
-                id="brand-scout-icon"
-                className="w-8 h-8 rounded-lg bg-neutral-900 border border-neutral-700/80 flex items-center justify-center text-cyan-400"
-              >
-                <Sparkles className="w-4 h-4" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-sm font-semibold tracking-wider font-mono text-neutral-100">
-                  NEXORA
+            <span className="text-neutral-700">|</span>
+            <div className="flex items-center gap-2">
+              <span className={`px-2 py-0.5 rounded-md border text-[11px] font-semibold ${ROLE_LABELS[userProfile.role].badge}`}>
+                {ROLE_LABELS[userProfile.role].label.toUpperCase()}
+              </span>
+              <span className="text-neutral-400 hidden sm:inline">
+                {userProfile.email || userProfile.fullName}
+              </span>
+              {userProfile.organization && (
+                <span className="text-neutral-500 hidden md:inline">
+                  · {userProfile.organization}
                 </span>
-                <span className="text-[10px] text-neutral-400 uppercase tracking-wider">
-                  AI Scout & User Dashboard
-                </span>
-              </div>
+              )}
             </div>
           </div>
 
-          {/* Navigation Links */}
-          <nav className="hidden md:flex items-center gap-6 text-xs font-medium text-neutral-400">
-            <Link href="/" className="hover:text-neutral-100 transition-colors">
-              Platform
-            </Link>
-            <Link href="/explore" className="hover:text-neutral-100 transition-colors">
-              Discovery
-            </Link>
-            <Link href="/challenges" className="hover:text-neutral-100 transition-colors">
-              Challenges
-            </Link>
-            <span className="text-cyan-400 font-semibold flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-              Scout Console
-            </span>
-            <Link href="/admin" className="hover:text-neutral-100 transition-colors">
-              Admin
-            </Link>
-          </nav>
-
-          <div className="flex items-center gap-2.5">
-            <Link
-              id="header-live-scout-btn"
-              href="/ai-scout"
-              className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-neutral-950 transition-colors"
+          <div className="flex items-center gap-2 sm:gap-3">
+            {userProfile.role === 'admin' && (
+              <Link
+                href="/admin"
+                className="px-2.5 py-1 rounded-lg bg-rose-950 border border-rose-800 text-rose-300 hover:bg-rose-900 transition-colors flex items-center gap-1 text-[11px]"
+              >
+                <Shield className="w-3 h-3 text-rose-400" />
+                <span>Curator Admin</span>
+              </Link>
+            )}
+            {userProfile.role === 'enterprise' && (
+              <Link
+                href="/challenges"
+                className="px-2.5 py-1 rounded-lg bg-amber-950 border border-amber-800 text-amber-300 hover:bg-amber-900 transition-colors flex items-center gap-1 text-[11px]"
+              >
+                <Briefcase className="w-3 h-3 text-amber-400" />
+                <span>RFP Grants</span>
+              </Link>
+            )}
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-rose-300 transition-colors cursor-pointer text-[11px]"
             >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Live AI Scout</span>
-            </Link>
-            <Link
-              id="header-explore-btn"
-              href="/explore"
-              className="inline-flex items-center justify-center text-xs font-semibold px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-200 transition-colors"
-            >
-              Catalog
-            </Link>
+              <LogOut className="w-3 h-3" />
+              <span className="hidden sm:inline">Sign Out</span>
+            </button>
           </div>
         </div>
-      </header>
+      </div>
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-10">
