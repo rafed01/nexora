@@ -46,20 +46,6 @@ interface OrgOption {
   industry?: string;
 }
 
-const FALLBACK_ORGS: OrgOption[] = [
-  { id: 'org-cern-eth', name: 'CERN OpenLab & ETH Zurich', industry: 'Quantum Computing & Particle Physics' },
-  { id: 'org-kyoto-mat', name: 'Kyoto Materials Innovation Lab / Tokyo Tech', industry: 'Advanced Energy Storage' },
-  { id: 'org-nexora-opto', name: 'NEXORA Optoelectronics Core / IMEC Spinout', industry: 'Silicon Photonics & Optical Computing' },
-  { id: 'org-isae-onera', name: 'ISAE-SUPAERO & ONERA Spinout', industry: 'Hypersonic Propulsion & Defense' },
-  { id: 'org-biozentrum', name: 'Biozentrum Basel & ETH Zurich', industry: 'Synthetic Biology & Gene Editing' },
-  { id: 'org-novavolt', name: 'Novavolt Powertrain Systems', industry: 'Heavy EV Powertrains' },
-  { id: 'org-max-planck', name: 'Max Planck Institute for Quantum Optics', industry: 'Quantum Error Mitigation' },
-  { id: 'org-helios', name: 'Helios Cloud Infrastructure Group', industry: 'Sub-Watt AI Hardware' },
-  { id: 'org-siemens-ventures', name: 'Siemens Energy Ventures AG', industry: 'Clean Energy & Grid Systems' },
-  { id: 'org-defense-cluster', name: 'European Aerospace Defense Consortium', industry: 'Aerospace & Defense' },
-  { id: 'org-nordic-clean', name: 'Nordic Clean Energy Fund', industry: 'Clean Energy Investments' },
-];
-
 export default function AuthModal({
   isOpen,
   onClose,
@@ -90,7 +76,9 @@ export default function AuthModal({
   const [independentFocusArea, setIndependentFocusArea] = useState('');
 
   // 2. Organization Employee Fields & Organization Search
-  const [approvedOrgs, setApprovedOrgs] = useState<OrgOption[]>(FALLBACK_ORGS);
+  const [approvedOrgs, setApprovedOrgs] = useState<OrgOption[]>([]);
+  const [orgsLoading, setOrgsLoading] = useState(false);
+  const [orgsLoadError, setOrgsLoadError] = useState<string | null>(null);
   const [orgSearchQuery, setOrgSearchQuery] = useState('');
   const [selectedOrg, setSelectedOrg] = useState<OrgOption | null>(null);
   const [isOrgDropdownOpen, setIsOrgDropdownOpen] = useState(false);
@@ -125,20 +113,42 @@ export default function AuthModal({
     }
   }, [intent, saveIntent]);
 
-  // Fetch approved organizations for employee searchable selection
+  // Fetch approved organizations for employee searchable selection from /api/organizations
   useEffect(() => {
     let mounted = true;
     async function fetchApprovedOrganizations() {
+      setOrgsLoading(true);
+      setOrgsLoadError(null);
       try {
         const res = await fetch('/api/organizations');
         if (res.ok) {
           const data = await res.json();
-          if (mounted && Array.isArray(data.organizations) && data.organizations.length > 0) {
-            setApprovedOrgs(data.organizations);
+          if (mounted) {
+            if (Array.isArray(data.organizations)) {
+              setApprovedOrgs(data.organizations);
+              if (data.organizations.length === 0) {
+                setOrgsLoadError('No approved organizations available at this time.');
+              }
+            } else {
+              setApprovedOrgs([]);
+              setOrgsLoadError('Invalid organization directory response.');
+            }
+          }
+        } else {
+          if (mounted) {
+            setApprovedOrgs([]);
+            setOrgsLoadError('Failed to load approved organizations from registry.');
           }
         }
-      } catch (err) {
-        // Keep fallback orgs
+      } catch (err: any) {
+        if (mounted) {
+          setApprovedOrgs([]);
+          setOrgsLoadError(err.message || 'Network error loading approved organizations.');
+        }
+      } finally {
+        if (mounted) {
+          setOrgsLoading(false);
+        }
       }
     }
     if (isOpen && tab === 'signup' && signupChoice === 'employee') {
@@ -183,7 +193,7 @@ export default function AuthModal({
 
   const currentIntent = intent || pendingIntent;
 
-  // Finalizes authentication and routing
+  // Finalizes authentication and routing (never storing role/approval/admin in localStorage or cookies)
   const finalizeAuth = async (
     userId: string,
     userEmail: string,
@@ -193,20 +203,12 @@ export default function AuthModal({
     metadata?: Record<string, any>,
     sessionToken?: string
   ) => {
-    // Set Edge middleware and browser session cookies
-    document.cookie = `nexora_user_role=${role}; path=/; max-age=604800; SameSite=Lax`;
-    document.cookie = `nexora_user_status=${status}; path=/; max-age=604800; SameSite=Lax`;
-    document.cookie = `nexora_onboarding_completed=${onboardingCompleted ? 'true' : 'false'}; path=/; max-age=604800; SameSite=Lax`;
-
     if (sessionToken) {
       document.cookie = `sb-access-token=${sessionToken}; path=/; max-age=604800; SameSite=Lax`;
     }
 
     try {
-      localStorage.setItem('nexora_user_role', role);
-      localStorage.setItem('nexora_user_status', status);
       localStorage.setItem('nexora_user_email', userEmail);
-      localStorage.setItem('nexora_onboarding_completed', onboardingCompleted ? 'true' : 'false');
     } catch {}
 
     // Execute intercepted intent if exists
@@ -338,8 +340,13 @@ export default function AuthModal({
         setLoading(false);
         return;
       }
+      if (orgsLoadError || approvedOrgs.length === 0) {
+        setErrorMsg(orgsLoadError || 'Approved organizations registry is unavailable. Employee registration is currently disabled.');
+        setLoading(false);
+        return;
+      }
       if (!selectedOrg) {
-        setErrorMsg('Please select your approved organization from the list.');
+        setErrorMsg('Please select your approved organization from the registry list.');
         setLoading(false);
         return;
       }
@@ -419,40 +426,14 @@ export default function AuthModal({
           ? 'employee'
           : 'user';
 
-      // All public signup accounts remain 'pending' until approved
-      const initialStatus: 'pending' = 'pending';
-
       // Assemble strict metadata payload
       let metadataPayload: Record<string, any> = {
         role: mappedRole,
-        approval_status: initialStatus,
-        onboarding_completed: false,
-      };
-
-      let profilePayload: Partial<UserProfile> & {
-        id: string;
-        email: string;
-        role: UserRole;
-        approval_status: 'pending';
-      } = {
-        id: '',
-        email: email.trim().toLowerCase(),
-        role: mappedRole,
-        approval_status: initialStatus,
-        status: initialStatus,
-        onboarding_completed: false,
-        updated_at: new Date().toISOString(),
       };
 
       if (signupChoice === 'user') {
         metadataPayload = {
           ...metadataPayload,
-          full_name: fullName.trim(),
-          organization: independentOrgText.trim() || 'Independent',
-          focus_area: independentFocusArea.trim(),
-        };
-        profilePayload = {
-          ...profilePayload,
           full_name: fullName.trim(),
           organization: independentOrgText.trim() || 'Independent',
           focus_area: independentFocusArea.trim(),
@@ -464,12 +445,6 @@ export default function AuthModal({
           organization: selectedOrg?.name || '',
           organization_id: selectedOrg?.id || undefined,
         };
-        profilePayload = {
-          ...profilePayload,
-          full_name: fullName.trim(),
-          organization: selectedOrg?.name || '',
-          organization_id: selectedOrg?.id || null,
-        };
       } else if (signupChoice === 'advisor') {
         metadataPayload = {
           ...metadataPayload,
@@ -479,26 +454,9 @@ export default function AuthModal({
           advisory_history: advisorHistory.trim(),
           linkedin_url: advisorLinkedin.trim(),
         };
-        profilePayload = {
-          ...profilePayload,
-          full_name: fullName.trim(),
-          domain_expertise: advisorExpertise.trim(),
-          credentials: advisorCredentials.trim(),
-          advisory_history: advisorHistory.trim(),
-          linkedin_url: advisorLinkedin.trim(),
-        };
       } else if (signupChoice === 'enterprise') {
         metadataPayload = {
           ...metadataPayload,
-          full_name: enterpriseContactName.trim(),
-          company_name: enterpriseCompanyName.trim(),
-          organization: enterpriseCompanyName.trim(),
-          tax_id: enterpriseTaxId.trim(),
-          company_size: enterpriseSize,
-          industry: enterpriseIndustry,
-        };
-        profilePayload = {
-          ...profilePayload,
           full_name: enterpriseContactName.trim(),
           company_name: enterpriseCompanyName.trim(),
           organization: enterpriseCompanyName.trim(),
@@ -528,30 +486,10 @@ export default function AuthModal({
 
       setSubmittedEmail(email.trim().toLowerCase());
 
-      // Check if email confirmation is required (Supabase returns user with empty identities or null session if email confirmation is enabled)
+      // Check if email confirmation is required
       const requiresEmailConfirm = !data.session && (!data.user.identities || data.user.identities.length === 0 || data.user.confirmed_at === null);
 
-      // Attempt to upsert the profile in public.profiles table
-      profilePayload.id = data.user.id;
-      const { error: profileUpsertError } = await supabase
-        .from('profiles')
-        .upsert(profilePayload, { onConflict: 'id' });
-
-      if (profileUpsertError) {
-        console.warn('Profile record upsert warning:', profileUpsertError.message);
-      }
-
-      // Set cookie/localStorage records
-      document.cookie = `nexora_user_role=${mappedRole}; path=/; max-age=604800; SameSite=Lax`;
-      document.cookie = `nexora_user_status=${initialStatus}; path=/; max-age=604800; SameSite=Lax`;
-      document.cookie = `nexora_onboarding_completed=false; path=/; max-age=604800; SameSite=Lax`;
-
-      try {
-        localStorage.setItem('nexora_user_role', mappedRole);
-        localStorage.setItem('nexora_user_status', initialStatus);
-        localStorage.setItem('nexora_user_email', email.trim().toLowerCase());
-        localStorage.setItem('nexora_onboarding_completed', 'false');
-      } catch {}
+      // NOTE: public.profiles is created exclusively by the Supabase database trigger. No client-side profile upsert is performed.
 
       if (requiresEmailConfirm) {
         setSignupState('email_confirmation_required');
@@ -1150,6 +1088,11 @@ export default function AuthModal({
                         </div>
                       )}
                     </div>
+                    {orgsLoadError && (
+                      <p className="text-[11px] text-rose-400 font-mono mt-1">
+                        {orgsLoadError}
+                      </p>
+                    )}
                     {selectedOrg && (
                       <p className="text-[10px] text-sky-400 font-mono mt-1">
                         Linked node: {selectedOrg.name}
