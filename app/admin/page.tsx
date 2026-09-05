@@ -2,7 +2,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import {
   Shield,
   Layers,
@@ -46,7 +45,7 @@ import {
   Loader2,
   AlertCircle,
 } from 'lucide-react';
-import { getBrowserSupabase, isSupabaseEnabled } from '@/lib/supabaseClient';
+import { isSupabaseEnabled } from '@/lib/supabaseClient';
 import { useAuth } from '@/components/providers/AuthProvider';
 
 type EntityTab = 'technologies' | 'startups' | 'experts' | 'challenges' | 'reports' | 'requests' | 'accounts';
@@ -310,7 +309,6 @@ const INITIAL_REQUESTS: AccessRequest[] = [
 ];
 
 export default function AdminPage() {
-  const router = useRouter();
   const [activeTab, setActiveTab] = useState<EntityTab>('technologies');
   const [entities, setEntities] = useState<AdminItem[]>(INITIAL_ENTITIES);
   const [requests, setRequests] = useState<AccessRequest[]>([]);
@@ -321,122 +319,10 @@ export default function AdminPage() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Authentication State
-  const { user: authUser, profile: authProfile, isLoading: isAuthLoading } = useAuth();
-  const [sessionUser, setSessionUser] = useState<{ email?: string; id?: string; role?: string } | null>(null);
-  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const { user, profile, isLoading, signOut } = useAuth();
 
   // Derive consolidated admin status strictly from verified database profile
-  const isAdmin = useMemo(() => {
-    return authProfile?.role === 'admin' || sessionUser?.role === 'admin';
-  }, [authProfile, sessionUser]);
-
-  // Sync Supabase Auth Session & Strict Role Verification
-  useEffect(() => {
-    let isMounted = true;
-
-    async function initializeAuth() {
-      if (!isSupabaseEnabled) {
-        if (isMounted) setIsCheckingAuth(false);
-        return;
-      }
-
-      const supabase = getBrowserSupabase();
-      if (!supabase) {
-        if (isMounted) setIsCheckingAuth(false);
-        return;
-      }
-
-      try {
-        const { data } = await supabase.auth.getSession();
-        if (isMounted) {
-          if (data.session?.user) {
-            // Fetch live profile from Supabase profiles table
-            const { data: dbProfile } = await supabase
-              .from('profiles')
-              .select('id, email, role, approval_status')
-              .eq('id', data.session.user.id)
-              .maybeSingle();
-
-            const resolvedRole = dbProfile?.role || 'user';
-
-            setSessionUser({
-              email: data.session.user.email || dbProfile?.email || 'Authenticated User',
-              id: data.session.user.id,
-              role: resolvedRole,
-            });
-          } else {
-            setSessionUser(null);
-          }
-          setIsCheckingAuth(false);
-        }
-      } catch (err) {
-        console.error('Failed to get Supabase session:', err);
-        if (isMounted) setIsCheckingAuth(false);
-      }
-    }
-
-    initializeAuth();
-
-    if (isSupabaseEnabled) {
-      const supabase = getBrowserSupabase();
-      if (supabase) {
-        const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
-          if (isMounted) {
-            if (session?.user) {
-              const { data: dbProfile } = await supabase
-                .from('profiles')
-                .select('id, email, role, approval_status')
-                .eq('id', session.user.id)
-                .maybeSingle();
-
-              const resolvedRole = dbProfile?.role || 'user';
-
-              setSessionUser({
-                email: session.user.email || dbProfile?.email || 'Authenticated User',
-                id: session.user.id,
-                role: resolvedRole,
-              });
-            } else {
-              setSessionUser(null);
-            }
-          }
-        });
-
-        return () => {
-          isMounted = false;
-          authListener.subscription.unsubscribe();
-        };
-      }
-    }
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  const handleSignOut = async () => {
-    if (isSupabaseEnabled) {
-      const supabase = getBrowserSupabase();
-      if (supabase) {
-        await supabase.auth.signOut();
-      }
-    }
-    // Clear auth helper cookies and localStorage
-    document.cookie = 'sb-access-token=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_user_role=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_user_status=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_onboarding_completed=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_admin_session=; path=/; max-age=0; SameSite=Lax';
-    try {
-      localStorage.removeItem('nexora_admin_session');
-      localStorage.removeItem('nexora_user_role');
-      localStorage.removeItem('nexora_user_status');
-      localStorage.removeItem('nexora_onboarding_completed');
-      localStorage.removeItem('nexora_user_email');
-    } catch {}
-    setSessionUser(null);
-    router.push('/login');
-  };
+  const isAdmin = profile?.role === 'admin' && profile.approval_status === 'approved';
 
   const fetchAccountsQueue = React.useCallback(async () => {
     try {
@@ -454,6 +340,8 @@ export default function AdminPage() {
 
   // Fetch real submissions and dynamic catalog from backend API on mount
   useEffect(() => {
+    if (isLoading || !isAdmin) return;
+
     async function fetchAdminData() {
       try {
         const res = await fetch('/api/request-access');
@@ -523,7 +411,7 @@ export default function AdminPage() {
     }
     
     fetchAdminData();
-  }, [fetchAccountsQueue]);
+  }, [fetchAccountsQueue, isAdmin, isLoading]);
 
   // New Entity Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -764,7 +652,7 @@ export default function AdminPage() {
   };
 
   // Auth Check Loading State
-  if ((isCheckingAuth || isAuthLoading) && !isAdmin) {
+  if (isLoading) {
     return (
       <div className="min-h-[85vh] bg-neutral-950 flex flex-col items-center justify-center p-4 space-y-4">
         <div className="w-8 h-8 rounded-full border-2 border-cyan-500 border-t-transparent animate-spin" />
@@ -776,7 +664,7 @@ export default function AdminPage() {
   // If Admin clearance is verified, bypass both the login gate and clearance mismatch gate!
   if (!isAdmin) {
     // Unauthenticated State
-    if (!sessionUser && !authUser) {
+    if (!user) {
       return (
         <div className="min-h-[85vh] bg-neutral-950 flex items-center justify-center p-4 sm:p-6 text-neutral-100">
           <div className="max-w-md w-full bg-neutral-900 border border-neutral-800 rounded-2xl p-6 sm:p-8 space-y-6 text-center">
@@ -811,8 +699,8 @@ export default function AdminPage() {
     }
 
     // Insufficient Clearance State (Authenticated as Researcher, Enterprise Sponsor, or Guest)
-    const currentRole = sessionUser?.role || authProfile?.role || 'user';
-    const currentEmail = sessionUser?.email || authUser?.email || 'Authenticated User';
+    const currentRole = profile?.role || 'user';
+    const currentEmail = user?.email || profile?.email || 'Authenticated User';
     const roleLabel =
       currentRole === 'advisor'
         ? 'Technical Advisor'
@@ -874,7 +762,7 @@ export default function AdminPage() {
               </Link>
               <button
                 type="button"
-                onClick={handleSignOut}
+                onClick={() => void signOut()}
                 className="py-2.5 px-3 rounded-xl bg-red-950/40 hover:bg-red-900/60 border border-red-500/30 text-red-300 text-xs font-mono flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
               >
                 <LogOut className="w-3.5 h-3.5" />
@@ -924,12 +812,12 @@ export default function AdminPage() {
           </div>
 
           <div className="flex items-center flex-wrap gap-2 w-full sm:w-auto justify-end">
-            {(sessionUser?.email || authUser?.email || authProfile?.email) && (
+            {(user?.email || profile?.email) && (
               <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-neutral-900 border border-neutral-800 text-[11px] font-mono text-neutral-300">
                 <UserCheck className="w-3.5 h-3.5 text-cyan-400" />
                 <span className="text-neutral-400">Curator:</span>
                 <span className="text-cyan-300 font-semibold">
-                  {sessionUser?.email || authUser?.email || authProfile?.email || 'Platform Curator'}
+                  {user?.email || profile?.email || 'Platform Curator'}
                 </span>
               </div>
             )}
@@ -953,10 +841,10 @@ export default function AdminPage() {
               <span>Register Node</span>
             </button>
 
-            {(isSupabaseEnabled || sessionUser) && (
+            {user && (
               <button
                 type="button"
-                onClick={handleSignOut}
+                onClick={() => void signOut()}
                 className="px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-rose-950/60 border border-neutral-800 hover:border-rose-800 text-xs font-mono text-neutral-400 hover:text-rose-300 flex items-center gap-1.5 transition-colors cursor-pointer"
                 title="Sign Out of Curator Console"
               >
