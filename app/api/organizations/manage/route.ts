@@ -120,86 +120,41 @@ export async function POST(request: NextRequest) {
     }
 
     const adminDb = createAdminClient();
-
-    // Fetch the target profile BEFORE updating, to confirm it truly belongs to this organization.
-    const { data: target, error: fetchErr } = await adminDb
-      .from('profiles')
-      .select('*')
-      .eq('id', employeeId)
-      .maybeSingle();
-
-    if (fetchErr || !target || target.role !== 'employee' || target.organization_id !== organizationId) {
-      // Do not distinguish "doesn't exist" from "belongs to another organization" in the response.
-      return NextResponse.json(
-        { error: 'Employee not found in this organization.' },
-        { status: 404 }
-      );
-    }
-
-    if (target.approval_status !== 'pending') {
-      return NextResponse.json(
-        { error: 'This employee has already been decided.' },
-        { status: 409 }
-      );
-    }
-
-    const decisionTime = new Date().toISOString();
-    const updatePayload = {
-      approval_status: decision,
-      status: decision,
-      approved_by: authOutcome.user.id,
-      approved_at: decisionTime,
-      rejection_reason: decision === 'rejected' ? (reason || 'Declined by organization management.') : null,
-      updated_at: decisionTime,
-    };
-
-    // Guard the update with .eq('approval_status', 'pending') so a concurrent duplicate
-    // request can never silently report success without actually changing a row.
-    const { data: updatedRows, error: updateErr } = await adminDb
-      .from('profiles')
-      .update(updatePayload)
-      .eq('id', employeeId)
-      .eq('organization_id', organizationId)
-      .eq('approval_status', 'pending')
-      .select();
-
-    if (updateErr) {
-      console.error('Error updating employee decision:', updateErr.message);
-      return NextResponse.json({ error: `Failed to save decision: ${updateErr.message}` }, { status: 500 });
-    }
-
-    const updatedRecord = updatedRows && updatedRows[0];
-    if (!updatedRecord) {
-      return NextResponse.json(
-        { error: 'This employee has already been decided.' },
-        { status: 409 }
-      );
-    }
-
-    if (decision === 'approved') {
-      const { error: memberErr } = await adminDb
-        .from('organization_members')
-        .upsert(
-          {
-            organization_id: organizationId,
-            user_id: employeeId,
-            role: 'employee',
-          },
-          { onConflict: 'organization_id,user_id' }
-        );
-
-      if (memberErr) {
-        console.error('Error linking approved employee membership:', memberErr.message);
-        return NextResponse.json({ error: `Failed to link employee membership: ${memberErr.message}` }, { status: 500 });
+    const { data: result, error: rpcError } = await adminDb.rpc(
+      'decide_organization_employee_approval',
+      {
+        p_target_profile_id: employeeId,
+        p_decision: decision,
+        p_reason: typeof reason === 'string' ? reason : null,
+        p_manager_id: authOutcome.user.id,
+        p_organization_id: organizationId,
       }
+    );
+
+    if (rpcError) {
+      console.error('Error executing atomic employee approval:', rpcError.message);
+      return NextResponse.json({ error: 'Failed to save decision.' }, { status: 500 });
+    }
+
+    const resultCode = result?.code;
+    const statusByCode: Record<string, number> = {
+      not_found: 404,
+      forbidden_target: 403,
+      already_decided: 409,
+    };
+    if (!result?.success) {
+      return NextResponse.json(
+        { error: result?.message || 'Failed to save decision.', code: resultCode },
+        { status: statusByCode[resultCode] || 500 }
+      );
     }
 
     return NextResponse.json({
       success: true,
-      record: updatedRecord,
+      record: result.profile,
       decision,
       decidedBy: authOutcome.user.id,
-      decidedAt: decisionTime,
+      decidedAt: result.decided_at,
     });
   } catch (error: any) {
     console.error('Error in enterprise organization management POST:', error);

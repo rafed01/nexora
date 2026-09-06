@@ -94,142 +94,43 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const decisionTime = new Date().toISOString();
-
     const adminSupabase = createAdminClient();
-
-    // Retrieve existing profile to verify it's a valid top-level pending account
-    const { data: existingProfile, error: fetchErr } = await adminSupabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .maybeSingle();
-
-    if (fetchErr || !existingProfile) {
-      return NextResponse.json(
-        { error: 'Account not found in profile registry' },
-        { status: 404 }
-      );
-    }
-
-    // Enterprise accounts require an organization to be created/linked on approval.
-    // 'company' is a legacy synonym for 'enterprise' still present on older profile rows
-    // (see lib/db.ts, app/admin/page.tsx) and must be treated identically here.
-    // Validate BEFORE any write so the operation either fully succeeds or fully rejects.
-    const isEnterpriseApproval =
-      decision === 'approved' && (existingProfile.role === 'enterprise' || existingProfile.role === 'company');
-    const companyName = typeof existingProfile.company_name === 'string' ? existingProfile.company_name.trim() : '';
-
-    if (isEnterpriseApproval && !companyName) {
-      return NextResponse.json(
-        { error: 'Cannot approve enterprise account: required company information (company name) is missing from the profile.' },
-        { status: 400 }
-      );
-    }
-
-    // Merge metadata with decision audit telemetry
-    const updatedMetadata = {
-      ...(existingProfile.metadata || {}),
-      reviewed_by: actingAdmin.id,
-      reviewed_by_email: actingAdmin.email,
-      reviewed_at: decisionTime,
-      decision_notes: reason || null,
-      rejection_reason: decision === 'rejected' ? (reason || 'Application declined by platform governance committee.') : null,
-    };
-
-    const updatePayload: Record<string, any> = {
-      approval_status: decision,
-      updated_at: decisionTime,
-      metadata: updatedMetadata,
-    };
-
-    // If approved, ensure onboarding_completed remains false unless already complete
-    if (decision === 'approved' && typeof existingProfile.onboarding_completed !== 'boolean') {
-      updatePayload.onboarding_completed = false;
-    }
-
-    let organizationRecord: any = null;
-
-    if (isEnterpriseApproval) {
-      // Idempotent upsert keyed on owner_id (unique partial index, see
-      // scripts/004_enterprise_employee_approval.sql) so retried/duplicate approvals
-      // never create a second organization for the same enterprise account.
-      const { data: upsertedOrg, error: orgUpsertErr } = await adminSupabase
-        .from('organizations')
-        .upsert(
-          {
-            name: companyName,
-            owner_id: userId,
-            industry: existingProfile.industry || null,
-            domain: (existingProfile.email || '').split('@')[1] || null,
-            approval_status: 'approved',
-            verified_at: decisionTime,
-            verified_by: actingAdmin.id,
-            updated_at: decisionTime,
-          },
-          { onConflict: 'owner_id' }
-        )
-        .select()
-        .single();
-
-      if (orgUpsertErr || !upsertedOrg) {
-        console.error('Error creating/linking enterprise organization:', orgUpsertErr?.message);
-        return NextResponse.json(
-          { error: `Failed to activate enterprise organization: ${orgUpsertErr?.message || 'Unknown error'}` },
-          { status: 500 }
-        );
+    const { data: result, error: rpcError } = await adminSupabase.rpc(
+      'decide_top_level_account_approval',
+      {
+        p_target_profile_id: userId,
+        p_decision: decision,
+        p_reason: typeof reason === 'string' ? reason : null,
+        p_acting_admin_id: actingAdmin.id,
       }
+    );
 
-      organizationRecord = upsertedOrg;
-      updatePayload.organization_id = upsertedOrg.id;
-      updatePayload.organization = companyName;
-      // Onboarding remains a separate step for the enterprise owner; never force it here.
-      updatePayload.onboarding_completed = existingProfile.onboarding_completed === true;
-
-      // Idempotent upsert of the owner membership row.
-      const { error: memberErr } = await adminSupabase
-        .from('organization_members')
-        .upsert(
-          {
-            organization_id: upsertedOrg.id,
-            user_id: userId,
-            role: 'owner',
-            is_primary: true,
-          },
-          { onConflict: 'organization_id,user_id' }
-        );
-
-      if (memberErr) {
-        console.error('Error linking enterprise owner membership:', memberErr.message);
-        return NextResponse.json(
-          { error: `Failed to link organization owner membership: ${memberErr.message}` },
-          { status: 500 }
-        );
-      }
+    if (rpcError) {
+      console.error('Error executing atomic platform approval:', rpcError.message);
+      return NextResponse.json({ error: 'Failed to save decision.' }, { status: 500 });
     }
 
-    const { data: updatedRecord, error: updateErr } = await adminSupabase
-      .from('profiles')
-      .update(updatePayload)
-      .eq('id', userId)
-      .select()
-      .single();
-
-    if (updateErr) {
-      console.error('Error executing admin decision in Supabase:', updateErr.message);
+    const resultCode = result?.code;
+    const statusByCode: Record<string, number> = {
+      not_found: 404,
+      forbidden_target: 403,
+      already_decided: 409,
+      missing_company_name: 400,
+    };
+    if (!result?.success) {
       return NextResponse.json(
-        { error: `Failed to save decision: ${updateErr.message}` },
-        { status: 500 }
+        { error: result?.message || 'Failed to save decision.', code: resultCode },
+        { status: statusByCode[resultCode] || 500 }
       );
     }
 
     return NextResponse.json({
       success: true,
-      record: updatedRecord,
-      organization: organizationRecord,
+      record: result.profile,
+      organization: result.organization || null,
       decision,
       decidedBy: actingAdmin.id,
-      decidedAt: decisionTime,
+      decidedAt: result.decided_at,
     });
   } catch (error: any) {
     console.error('Unexpected error in POST /api/admin/approvals:', error);
