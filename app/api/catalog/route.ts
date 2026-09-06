@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCatalog, saveCatalogItem } from "@/lib/db";
+import { requirePlatformAdmin } from "@/lib/supabase/auth";
 
 export async function GET() {
   try {
@@ -16,16 +17,32 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const adminAuth = await requirePlatformAdmin();
+    if (!adminAuth.authorized) {
+      return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
+    }
     const body = await request.json();
 
-    if (!body || typeof body !== "object") {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json(
         { error: "Invalid catalog item payload." },
         { status: 400 }
       );
     }
 
-    const savedItem = await saveCatalogItem(body);
+    const allowedTypes = ['technology', 'startup', 'expert', 'challenge', 'report'];
+    const allowedStatuses = ['Active', 'Pending', 'Archived', 'Draft'];
+    const title = typeof body.title === 'string' ? body.title.trim() : '';
+    const id = typeof body.id === 'string' ? body.id.trim() : '';
+    const type = typeof body.type === 'string' ? body.type : '';
+    const trl = body.trl === undefined ? undefined : Number(body.trl);
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || !allowedTypes.includes(type) ||
+        !title || title.length > 255 || (trl !== undefined && (!Number.isInteger(trl) || trl < 1 || trl > 9)) ||
+        (body.status && !allowedStatuses.includes(body.status))) {
+      return NextResponse.json({ error: 'Invalid catalog item fields.' }, { status: 400 });
+    }
+
+    const savedItem = await saveCatalogItem({ ...body, id, title, type, trl });
 
     return NextResponse.json(
       {

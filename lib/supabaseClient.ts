@@ -27,6 +27,7 @@ export interface UserProfile {
   tech_stack?: string[] | null;
   bio?: string | null;
   timezone?: string | null;
+  metadata?: Record<string, unknown> | null;
   onboarding_completed?: boolean;
   created_at?: string;
   updated_at?: string;

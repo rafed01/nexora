@@ -99,26 +99,45 @@ policy_check AS (
   WHERE schemaname = 'public'
 ),
 
--- 5. Check Security Definer helper functions
+-- 5. Check security-definer helper and atomic approval RPC functions
 function_check AS (
   SELECT 
     'Helper Functions' AS category,
     CASE 
-      WHEN COUNT(DISTINCT routine_name) >= 4 THEN 'PASS'
+      WHEN COUNT(DISTINCT routine_name) >= 6 THEN 'PASS'
       ELSE 'FAIL'
     END AS status,
-    CONCAT(COUNT(DISTINCT routine_name), ' / 4 security helper functions installed') AS details
-  FROM information_schema.routines
-  WHERE routine_schema = 'public'
-    AND routine_name IN (
+    CONCAT(COUNT(DISTINCT routine_name), ' / 6 security and approval functions installed') AS details
+  FROM information_schema.routines r
+  WHERE r.routine_schema = 'public'
+    AND r.routine_name IN (
       'is_admin', 
       'get_managed_organization_ids', 
       'is_org_manager', 
-      'is_org_member'
+      'is_org_member',
+      'decide_top_level_account_approval',
+      'decide_organization_employee_approval'
     )
 ),
 
--- 6. Check security triggers attached
+-- 6. Approval RPCs must be SECURITY DEFINER and callable only by service_role.
+approval_rpc_check AS (
+  SELECT
+    'Approval RPC Security' AS category,
+    CASE WHEN COUNT(*) = 2
+      AND bool_and(prosecdef)
+      AND bool_and(has_function_privilege('service_role', p.oid, 'EXECUTE'))
+      AND bool_and(NOT has_function_privilege('anon', p.oid, 'EXECUTE'))
+      AND bool_and(NOT has_function_privilege('authenticated', p.oid, 'EXECUTE'))
+      THEN 'PASS' ELSE 'FAIL' END AS status,
+    'Atomic approval RPCs are SECURITY DEFINER and service_role-only' AS details
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.proname IN ('decide_top_level_account_approval', 'decide_organization_employee_approval')
+),
+
+-- 7. Check security triggers attached
 trigger_check AS (
   SELECT 
     'Security Triggers' AS category,
@@ -148,6 +167,8 @@ FROM (
   UNION ALL
   SELECT 5 AS ord, * FROM function_check
   UNION ALL
-  SELECT 6 AS ord, * FROM trigger_check
+  SELECT 6 AS ord, * FROM approval_rpc_check
+  UNION ALL
+  SELECT 7 AS ord, * FROM trigger_check
 ) sub
 ORDER BY ord;

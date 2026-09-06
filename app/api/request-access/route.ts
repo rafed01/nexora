@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { saveAccessRequest, getAccessRequests } from "@/lib/db";
+import { requirePlatformAdmin } from "@/lib/supabase/auth";
 
 export async function GET() {
   try {
+    const adminAuth = await requirePlatformAdmin();
+    if (!adminAuth.authorized) {
+      return NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status });
+    }
     const requests = await getAccessRequests();
     return NextResponse.json({ requests });
   } catch (error: any) {

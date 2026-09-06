@@ -1,8 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { seedDatabase } from "@/lib/db";
+import { requirePlatformAdmin } from "@/lib/supabase/auth";
+
+async function requireSeedAccess() {
+  if (process.env.NODE_ENV === 'production' && process.env.ENABLE_ADMIN_SEED !== 'true') {
+    return { allowed: false, response: NextResponse.json({ error: 'Seed endpoint is disabled in production.' }, { status: 404 }) };
+  }
+  const adminAuth = await requirePlatformAdmin();
+  if (!adminAuth.authorized) {
+    return { allowed: false, response: NextResponse.json({ error: adminAuth.error }, { status: adminAuth.status }) };
+  }
+  return { allowed: true as const };
+}
 
 export async function GET(request: NextRequest) {
   try {
+    const access = await requireSeedAccess();
+    if (!access.allowed) return access.response;
     const searchParams = request.nextUrl.searchParams;
     const force = searchParams.get("force") === "true" || searchParams.get("reset") === "true";
 
@@ -30,6 +44,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const access = await requireSeedAccess();
+    if (!access.allowed) return access.response;
     let force = true;
     try {
       const body = await request.json();

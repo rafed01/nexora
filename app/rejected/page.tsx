@@ -1,7 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import React from 'react';
 import Link from 'next/link';
 import {
   XCircle,
@@ -14,67 +13,14 @@ import {
   FileQuestion,
   HelpCircle,
 } from 'lucide-react';
-import { getBrowserSupabase, isSupabaseEnabled } from '@/lib/supabaseClient';
+import { useAuth } from '@/components/providers/AuthProvider';
 
 export default function RejectedPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState<string>('applicant@institution.org');
-  const [reason, setReason] = useState<string>(
-    'Identity verification or institutional accreditation could not be validated by platform curators.'
-  );
-
-  useEffect(() => {
-    async function loadIdentity() {
-      const supabase = getBrowserSupabase();
-      if (isSupabaseEnabled && supabase) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          setEmail(session.user.email || '');
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('email, approval_status, metadata')
-            .eq('id', session.user.id)
-            .maybeSingle();
-
-          if (profile) {
-            if (profile.approval_status === 'approved') {
-              router.push('/dashboard');
-              return;
-            }
-            if (profile.metadata?.rejection_reason) {
-              setReason(profile.metadata.rejection_reason);
-            }
-          }
-        }
-      }
-    }
-    loadIdentity();
-  }, [router]);
-
-  const handleSignOut = async () => {
-    const supabase = getBrowserSupabase();
-    if (supabase) {
-      try {
-        await supabase.auth.signOut();
-      } catch {}
-    }
-
-    document.cookie = 'sb-access-token=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_user_role=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_user_status=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_onboarding_completed=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_admin_session=; path=/; max-age=0; SameSite=Lax';
-
-    try {
-      localStorage.removeItem('nexora_user_role');
-      localStorage.removeItem('nexora_user_status');
-      localStorage.removeItem('nexora_user_email');
-      localStorage.removeItem('nexora_onboarding_completed');
-      localStorage.removeItem('nexora_admin_session');
-    } catch {}
-
-    router.push('/login');
-  };
+  const { user, profile, signOut } = useAuth();
+  const email = profile?.email || user?.email || 'your account';
+  const reason = typeof profile?.metadata?.rejection_reason === 'string'
+    ? profile.metadata.rejection_reason
+    : 'Identity verification or institutional accreditation could not be validated by the platform team.';
 
   return (
     <div className="min-h-[88vh] bg-neutral-950 flex flex-col items-center justify-center p-4 selection:bg-rose-500/20 selection:text-rose-200">
@@ -122,7 +68,7 @@ export default function RejectedPage() {
 
           <button
             id="btn-rejected-signout"
-            onClick={handleSignOut}
+            onClick={() => void signOut()}
             className="w-full py-2.5 px-4 rounded-xl bg-neutral-950 hover:bg-rose-950/30 hover:border-rose-800 border border-neutral-800 text-neutral-400 hover:text-rose-300 text-xs font-mono flex items-center justify-center gap-2 transition-colors cursor-pointer"
           >
             <LogOut className="w-4 h-4" />

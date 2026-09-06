@@ -62,8 +62,8 @@ export async function middleware(request: NextRequest) {
       }
       if (profile.organization_id) organizationId = profile.organization_id as string;
     }
-  } catch {
-    // If profile lookup errors, retain default pending/user values
+  } catch (error) {
+    console.error('Unable to load profile for route protection:', error);
   }
 
   // 3. ADMIN ACCESS CONTROL:

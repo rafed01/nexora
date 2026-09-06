@@ -47,35 +47,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Feedback Toast for Intent Execution
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const syncAuthCookiesAndStorage = useCallback((
-    userObj: { id: string; email?: string } | null,
-    profileObj: UserProfile | null,
-    accessToken?: string
-  ) => {
-    if (typeof document === 'undefined') return;
-
-    if (userObj && profileObj) {
-      const role = profileObj.role || 'user';
-      const status = profileObj.approval_status || profileObj.status || 'pending';
-      const onboarding = profileObj.onboarding_completed === true || role === 'admin';
-
-      document.cookie = `nexora_user_role=${role}; path=/; max-age=604800; SameSite=Lax`;
-      document.cookie = `nexora_user_status=${status}; path=/; max-age=604800; SameSite=Lax`;
-      document.cookie = `nexora_onboarding_completed=${onboarding ? 'true' : 'false'}; path=/; max-age=604800; SameSite=Lax`;
-
-      if (accessToken) {
-        document.cookie = `sb-access-token=${accessToken}; path=/; max-age=604800; SameSite=Lax`;
-      }
-
-      try {
-        localStorage.setItem('nexora_user_role', role);
-        localStorage.setItem('nexora_user_status', status);
-        localStorage.setItem('nexora_user_email', userObj.email || profileObj.email || '');
-        localStorage.setItem('nexora_onboarding_completed', onboarding ? 'true' : 'false');
-      } catch {}
-    }
-  }, []);
-
   const loadSession = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -104,7 +75,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               onboarding_completed: castProfile.role === 'admin' ? true : castProfile.onboarding_completed === true,
             };
             setProfile(resolvedProfile);
-            syncAuthCookiesAndStorage(session.user, resolvedProfile, session.access_token);
           } else {
             // Default unassigned profile
             const unassigned: UserProfile = {
@@ -116,7 +86,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               onboarding_completed: false,
             };
             setProfile(unassigned);
-            syncAuthCookiesAndStorage(session.user, unassigned, session.access_token);
           }
         } else {
           setUser(null);
@@ -133,10 +102,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  }, [syncAuthCookiesAndStorage]);
+  }, []);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
+    const initialLoadTimer = window.setTimeout(() => {
       void loadSession();
     }, 0);
 
@@ -157,14 +126,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loadSession();
       });
       return () => {
-        clearTimeout(timer);
+        window.clearTimeout(initialLoadTimer);
         subscription.unsubscribe();
         window.removeEventListener('nexora:intent-executed', handleIntentExecuted);
       };
     }
 
     return () => {
-      clearTimeout(timer);
+      window.clearTimeout(initialLoadTimer);
       window.removeEventListener('nexora:intent-executed', handleIntentExecuted);
     };
   }, [loadSession]);
@@ -205,23 +174,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     const supabase = getBrowserSupabase();
     if (supabase) {
-      try {
-        await supabase.auth.signOut();
-      } catch {}
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        throw error;
+      }
     }
 
-    document.cookie = 'sb-access-token=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_user_role=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_user_status=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_onboarding_completed=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_admin_session=; path=/; max-age=0; SameSite=Lax';
-
     try {
-      localStorage.removeItem('nexora_user_role');
-      localStorage.removeItem('nexora_user_status');
-      localStorage.removeItem('nexora_user_email');
-      localStorage.removeItem('nexora_onboarding_completed');
-      localStorage.removeItem('nexora_admin_session');
+      localStorage.removeItem('nexora_pending_intent');
     } catch {}
 
     setUser(null);

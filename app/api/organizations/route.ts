@@ -33,7 +33,11 @@ export async function GET() {
         .eq('approval_status', 'approved')
         .order('name', { ascending: true });
 
-      if (!error && data && data.length > 0) {
+      if (error) {
+        console.error('Error fetching approved organizations:', error.message);
+        return NextResponse.json({ error: 'Failed to load organization directory.' }, { status: 500 });
+      }
+      if (data) {
         return NextResponse.json({ organizations: data });
       }
     }
@@ -62,6 +66,6 @@ export async function GET() {
     return NextResponse.json({ organizations });
   } catch (error: any) {
     console.error('Error fetching organizations:', error);
-    return NextResponse.json({ organizations: DEFAULT_APPROVED_ORGS });
+    return NextResponse.json({ error: 'Failed to load organization directory.' }, { status: 500 });
   }
 }

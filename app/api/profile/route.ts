@@ -86,16 +86,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Enforce role and approval status immutability:
-    // Regular users cannot grant themselves 'admin' or alter approval status
+    // Role, approval and organization authority are exclusively managed by the
+    // dedicated server-side approval flows, never this browser payload.
     const existingProfile = await getProfile(id);
-    const enforcedRole = currentUser.role === 'admin' 
-      ? (body.role || existingProfile?.role || 'user')
-      : (existingProfile?.role || currentUser.role || 'user');
-
-    const enforcedStatus = currentUser.role === 'admin'
-      ? (body.approval_status || existingProfile?.approval_status || 'pending')
-      : (existingProfile?.approval_status || currentUser.approval_status || 'pending');
+    const enforcedRole = existingProfile?.role || currentUser.role || 'user';
+    const enforcedStatus = existingProfile?.approval_status || currentUser.approval_status || 'pending';
 
     const saved = await saveProfile({
       id,
@@ -105,6 +100,7 @@ export async function POST(request: NextRequest) {
       company_name: body.company_name,
       role: enforcedRole,
       approval_status: enforcedStatus,
+      status: existingProfile?.status || enforcedStatus,
       focus_area: body.focus_area,
       domain_expertise: body.domain_expertise,
       credentials: body.credentials,
