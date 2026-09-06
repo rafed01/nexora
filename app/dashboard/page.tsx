@@ -1,8 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import {
   Sparkles,
   Search,
@@ -33,13 +32,10 @@ import {
   LogOut,
   User,
   KeyRound,
+  Users,
 } from 'lucide-react';
-import {
-  getBrowserSupabase,
-  isSupabaseEnabled,
-  UserRole,
-  ROLE_LABELS,
-} from '@/lib/supabaseClient';
+import { ROLE_LABELS, UserRole } from '@/lib/supabaseClient';
+import { useAuth } from '@/components/providers/AuthProvider';
 
 interface ScoutResult {
   id: string;
@@ -188,7 +184,7 @@ const INITIAL_ACTIVITIES: ActivityItem[] = [
 ];
 
 export default function DashboardScoutPage() {
-  const router = useRouter();
+  const { user, profile, signOut } = useAuth();
   const [prompt, setPrompt] = useState('');
   const [isScouting, setIsScouting] = useState(false);
   const [scoutedResults, setScoutedResults] = useState<ScoutResult[]>(INITIAL_RECOMMENDATIONS);
@@ -196,60 +192,16 @@ export default function DashboardScoutPage() {
   const [activities, setActivities] = useState<ActivityItem[]>(INITIAL_ACTIVITIES);
   const [scoutFeedback, setScoutFeedback] = useState<string | null>(null);
 
-  // User Auth & Role State
-  const [userProfile, setUserProfile] = useState<{
+  const userProfile: {
     email?: string;
     role: UserRole;
     fullName?: string;
     organization?: string;
-  }>({
-    role: 'researcher',
-    fullName: 'Research Fellow',
-    organization: 'NEXORA Deep-Tech Network',
-  });
-
-  useEffect(() => {
-    async function loadUser() {
-      if (isSupabaseEnabled) {
-        const supabase = getBrowserSupabase();
-        if (supabase) {
-          const { data } = await supabase.auth.getSession();
-          if (data.session?.user) {
-            const { data: dbProfile } = await supabase
-              .from('profiles')
-              .select('role, full_name, organization, email')
-              .eq('id', data.session.user.id)
-              .maybeSingle();
-
-            setUserProfile({
-              email: data.session.user.email || dbProfile?.email,
-              role: (dbProfile?.role as UserRole) || 'user',
-              fullName: dbProfile?.full_name || data.session.user.email?.split('@')[0] || 'User',
-              organization: dbProfile?.organization || 'Institutional Partner',
-            });
-          }
-        }
-      }
-    }
-    loadUser();
-  }, []);
-
-  const handleSignOut = async () => {
-    if (isSupabaseEnabled) {
-      const supabase = getBrowserSupabase();
-      if (supabase) {
-        await supabase.auth.signOut();
-      }
-    }
-    document.cookie = 'sb-access-token=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_user_role=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_admin_session=; path=/; max-age=0; SameSite=Lax';
-    try {
-      localStorage.removeItem("nexora_admin_session");
-      localStorage.removeItem("nexora_user_role");
-      localStorage.removeItem("nexora_user_email");
-    } catch {}
-    router.push('/login');
+  } = {
+    email: profile?.email || user?.email,
+    role: (profile?.role as UserRole) || 'user',
+    fullName: profile?.full_name || user?.email?.split('@')[0] || 'User',
+    organization: profile?.organization || undefined,
   };
 
   // Handle scouting execution
@@ -477,7 +429,7 @@ export default function DashboardScoutPage() {
                 <span>Curator Admin</span>
               </Link>
             )}
-            {userProfile.role === 'enterprise' && (
+            {(userProfile.role === 'enterprise' || userProfile.role === 'company') && (
               <Link
                 href="/challenges"
                 className="px-2.5 py-1 rounded-lg bg-amber-950 border border-amber-800 text-amber-300 hover:bg-amber-900 transition-colors flex items-center gap-1 text-[11px]"
@@ -486,9 +438,19 @@ export default function DashboardScoutPage() {
                 <span>RFP Grants</span>
               </Link>
             )}
+            {/* 'company' is a legacy synonym for 'enterprise' still present on older profile rows. */}
+            {(userProfile.role === 'enterprise' || userProfile.role === 'company') && (
+              <Link
+                href="/dashboard/enterprise"
+                className="px-2.5 py-1 rounded-lg bg-sky-950 border border-sky-800 text-sky-300 hover:bg-sky-900 transition-colors flex items-center gap-1 text-[11px]"
+              >
+                <Users className="w-3 h-3 text-sky-400" />
+                <span>Employee Approvals</span>
+              </Link>
+            )}
             <button
               type="button"
-              onClick={handleSignOut}
+              onClick={() => void signOut()}
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-neutral-800 hover:bg-neutral-800 text-neutral-400 hover:text-rose-300 transition-colors cursor-pointer text-[11px]"
             >
               <LogOut className="w-3 h-3" />

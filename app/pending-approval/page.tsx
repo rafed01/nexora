@@ -1,154 +1,85 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-  ShieldAlert,
   Clock,
   CheckCircle2,
   FileCheck,
   Compass,
   LogOut,
   RefreshCw,
-  Building2,
-  GraduationCap,
-  ArrowRight,
   Loader2,
-  ExternalLink,
 } from 'lucide-react';
-import { getBrowserSupabase, isSupabaseEnabled, UserRole } from '@/lib/supabaseClient';
+import { useAuth } from '@/components/providers/AuthProvider';
+
+const ROLE_PENDING_MESSAGES: Record<string, (organizationName: string | null) => string> = {
+  employee: (organizationName) =>
+    `Your account is awaiting approval from ${organizationName || 'your organization'}.`,
+  enterprise: () => 'Your organization account is awaiting NEXORA administrator approval.',
+  advisor: () => 'Your advisor account is awaiting NEXORA administrator approval.',
+  user: () => 'Your account is awaiting NEXORA administrator approval.',
+};
 
 export default function PendingApprovalPage() {
   const router = useRouter();
+  const { user, profile, isLoading, refreshProfile, signOut } = useAuth();
 
-  const [role, setRole] = useState<UserRole>(() => {
-    if (typeof window !== 'undefined') {
-      return (localStorage.getItem('nexora_user_role') || 'advisor') as UserRole;
-    }
-    return 'advisor';
-  });
-  const [email, setEmail] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('nexora_user_email') || 'authorized.applicant@institution.org';
-    }
-    return 'authorized.applicant@institution.org';
-  });
-  const [organization, setOrganization] = useState<string>('');
   const [isChecking, setIsChecking] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
+  // Redirect according to the verified profile's current status, whenever it changes
+  // (covers both the initial load and any subsequent refreshProfile() call).
   useEffect(() => {
-    const checkCurrentSession = async () => {
-      const supabase = getBrowserSupabase();
-      if (isSupabaseEnabled && supabase) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          setEmail(session.user.email || '');
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
+    if (isLoading || !profile) return;
 
-          if (profile) {
-            setRole(profile.role);
-            setOrganization(profile.organization || '');
-            if (profile.status === 'rejected' || profile.approval_status === 'rejected') {
-              router.push('/rejected');
-              return;
-            }
-            if (profile.status === 'approved' || profile.approval_status === 'approved') {
-              // Automatically forward if approved
-              document.cookie = 'nexora_user_status=approved; path=/; max-age=604800; SameSite=Lax';
-              localStorage.setItem('nexora_user_status', 'approved');
-              if (profile.onboarding_completed) {
-                router.push('/dashboard');
-              } else {
-                router.push('/onboarding');
-              }
-            }
-          }
-        }
+    if (profile.approval_status === 'rejected') {
+      router.push('/rejected');
+      return;
+    }
+
+    if (profile.approval_status === 'approved') {
+      if (profile.onboarding_completed) {
+        router.push('/dashboard');
+      } else {
+        router.push('/onboarding');
       }
-    };
+    }
+  }, [isLoading, profile, router]);
 
-    checkCurrentSession();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleRecheck = async () => {
+  const handleRecheck = useCallback(async () => {
     setIsChecking(true);
     setStatusMessage(null);
-
     try {
-      const supabase = getBrowserSupabase();
-      if (isSupabaseEnabled && supabase) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          const { data: profile, error } = await supabase
-            .from('profiles')
-            .select('approval_status, onboarding_completed, role')
-            .eq('id', session.user.id)
-            .single();
-
-          if (error) throw error;
-
-          const currentStatus = profile?.approval_status;
-          if (currentStatus === 'rejected') {
-            document.cookie = 'nexora_user_status=rejected; path=/; max-age=604800; SameSite=Lax';
-            localStorage.setItem('nexora_user_status', 'rejected');
-            router.push('/rejected');
-            return;
-          }
-          if (currentStatus === 'approved') {
-            document.cookie = 'nexora_user_status=approved; path=/; max-age=604800; SameSite=Lax';
-            localStorage.setItem('nexora_user_status', 'approved');
-            setStatusMessage('Clearance approved! Redirecting to progressive onboarding...');
-            setTimeout(() => {
-              if (profile.onboarding_completed) {
-                router.push('/dashboard');
-              } else {
-                router.push('/onboarding');
-              }
-            }, 1000);
-            return;
-          }
-        }
-      }
-
-      setStatusMessage('Verification in progress. Platform curators have not finalized sign-off yet.');
-    } catch (err: any) {
+      // Refresh may reload the profile status, but it never approves the account itself —
+      // approval only ever happens server-side via NEXORA administrator action.
+      await refreshProfile();
+      setStatusMessage('Clearance telemetry refreshed.');
+    } catch {
       setStatusMessage('Unable to query clearance telemetry. Please retry shortly.');
     } finally {
       setIsChecking(false);
     }
-  };
+  }, [refreshProfile]);
 
-  const handleSignOut = async () => {
-    const supabase = getBrowserSupabase();
-    if (supabase) {
-      try {
-        await supabase.auth.signOut();
-      } catch {}
-    }
+  const handleSignOut = useCallback(async () => {
+    await signOut();
+  }, [signOut]);
 
-    document.cookie = 'sb-access-token=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_user_role=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_user_status=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_onboarding_completed=; path=/; max-age=0; SameSite=Lax';
-    document.cookie = 'nexora_admin_session=; path=/; max-age=0; SameSite=Lax';
+  if (isLoading) {
+    return (
+      <div className="min-h-[85vh] bg-neutral-950 flex flex-col items-center justify-center p-4 space-y-4">
+        <div className="w-8 h-8 rounded-full border-2 border-cyan-500 border-t-transparent animate-spin" />
+        <div className="text-xs font-mono text-neutral-400">Verifying clearance with security gateway...</div>
+      </div>
+    );
+  }
 
-    try {
-      localStorage.removeItem('nexora_user_role');
-      localStorage.removeItem('nexora_user_status');
-      localStorage.removeItem('nexora_user_email');
-      localStorage.removeItem('nexora_onboarding_completed');
-      localStorage.removeItem('nexora_admin_session');
-    } catch {}
-
-    router.push('/login');
-  };
+  const role = profile?.role || 'user';
+  const email = user?.email || profile?.email || '';
+  const organizationName = profile?.organization || null;
+  const pendingMessage = (ROLE_PENDING_MESSAGES[role] || ROLE_PENDING_MESSAGES.user)(organizationName);
 
   return (
     <div className="min-h-[90vh] bg-neutral-950 flex flex-col items-center justify-center p-4 selection:bg-amber-500/20 selection:text-amber-200">
@@ -171,7 +102,7 @@ export default function PendingApprovalPage() {
               Application Under Review
             </h1>
             <p className="text-sm text-neutral-400 mt-1 max-w-md mx-auto">
-              Your classification credentials have been received and logged into the verification registry.
+              {pendingMessage}
             </p>
           </div>
         </div>
@@ -184,9 +115,7 @@ export default function PendingApprovalPage() {
           </div>
           <div className="flex justify-between items-center text-neutral-400 border-b border-neutral-800 pb-2">
             <span>Classification Role:</span>
-            <span className="text-amber-400 font-bold uppercase">
-              {role === 'company' || role === 'enterprise' ? 'Corporate Sponsor (Company)' : 'Technical Advisor'}
-            </span>
+            <span className="text-amber-400 font-bold uppercase">{role}</span>
           </div>
           <div className="flex justify-between items-center text-neutral-400">
             <span>Clearance Protocol:</span>

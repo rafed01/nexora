@@ -28,7 +28,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { getBrowserSupabase, isSupabaseEnabled, UserRole, UserProfile } from '@/lib/supabaseClient';
-import { useIntent, IntentActionInput, StoredIntent, executeIntentPayload } from '@/hooks/useIntent';
+import { useIntent, IntentActionInput, StoredIntent } from '@/hooks/useIntent';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -54,7 +54,7 @@ export default function AuthModal({
   onSuccess,
 }: AuthModalProps) {
   const router = useRouter();
-  const { pendingIntent, saveIntent, clearIntent } = useIntent();
+  const { pendingIntent, saveIntent } = useIntent();
 
   const [tab, setTab] = useState<'login' | 'signup'>(defaultTab);
   const [signupChoice, setSignupChoice] = useState<PublicSignupChoice>('user');
@@ -200,23 +200,8 @@ export default function AuthModal({
     role: UserRole,
     status: 'pending' | 'approved' | 'rejected',
     onboardingCompleted: boolean,
-    metadata?: Record<string, any>,
-    sessionToken?: string
+    metadata?: Record<string, any>
   ) => {
-    if (sessionToken) {
-      document.cookie = `sb-access-token=${sessionToken}; path=/; max-age=604800; SameSite=Lax`;
-    }
-
-    try {
-      localStorage.setItem('nexora_user_email', userEmail);
-    } catch {}
-
-    // Execute intercepted intent if exists
-    if (currentIntent) {
-      await executeIntentPayload(currentIntent as StoredIntent, userEmail);
-      clearIntent();
-    }
-
     if (onSuccess) {
       onSuccess({
         id: userId,
@@ -295,8 +280,7 @@ export default function AuthModal({
           role,
           status,
           onboardingCompleted,
-          profileData || undefined,
-          data.session.access_token
+          profileData || undefined
         );
       }
     } catch (err: any) {

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { getBrowserSupabase, isSupabaseEnabled } from '@/lib/supabaseClient';
 import { useIntent } from '@/hooks/useIntent';
+import { useAuth } from '@/components/providers/AuthProvider';
 
 const AVAILABLE_TECH_DOMAINS = [
   {
@@ -97,6 +98,7 @@ const TRL_LEVELS = [
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const { refreshProfile } = useAuth();
   const { executePendingIntent } = useIntent();
 
   const [step, setStep] = useState<number>(1);
@@ -224,13 +226,7 @@ export default function OnboardingPage() {
         }
       }
 
-      // Synchronize cookies and localStorage for edge middleware and client state
-      document.cookie = 'nexora_onboarding_completed=true; path=/; max-age=604800; SameSite=Lax';
-      try {
-        localStorage.setItem('nexora_onboarding_completed', 'true');
-        localStorage.setItem('nexora_user_tech_stack', JSON.stringify(selectedTags));
-        localStorage.setItem('nexora_user_bio', executiveBio);
-      } catch {}
+      await refreshProfile();
 
       // Automatically execute any pending intent
       try {

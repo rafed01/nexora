@@ -94,66 +94,43 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const decisionTime = new Date().toISOString();
-
     const adminSupabase = createAdminClient();
+    const { data: result, error: rpcError } = await adminSupabase.rpc(
+      'decide_top_level_account_approval',
+      {
+        p_target_profile_id: userId,
+        p_decision: decision,
+        p_reason: typeof reason === 'string' ? reason : null,
+        p_acting_admin_id: actingAdmin.id,
+      }
+    );
 
-    // Retrieve existing profile to verify it's a valid top-level pending account
-    const { data: existingProfile, error: fetchErr } = await adminSupabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .maybeSingle();
-
-    if (fetchErr || !existingProfile) {
-      return NextResponse.json(
-        { error: 'Account not found in profile registry' },
-        { status: 404 }
-      );
+    if (rpcError) {
+      console.error('Error executing atomic platform approval:', rpcError.message);
+      return NextResponse.json({ error: 'Failed to save decision.' }, { status: 500 });
     }
 
-    // Merge metadata with decision audit telemetry
-    const updatedMetadata = {
-      ...(existingProfile.metadata || {}),
-      reviewed_by: actingAdmin.id,
-      reviewed_by_email: actingAdmin.email,
-      reviewed_at: decisionTime,
-      decision_notes: reason || null,
-      rejection_reason: decision === 'rejected' ? (reason || 'Application declined by platform governance committee.') : null,
+    const resultCode = result?.code;
+    const statusByCode: Record<string, number> = {
+      not_found: 404,
+      forbidden_target: 403,
+      already_decided: 409,
+      missing_company_name: 400,
     };
-
-    const updatePayload: Record<string, any> = {
-      approval_status: decision,
-      updated_at: decisionTime,
-      metadata: updatedMetadata,
-    };
-
-    // If approved, ensure onboarding_completed remains false unless already complete
-    if (decision === 'approved' && typeof existingProfile.onboarding_completed !== 'boolean') {
-      updatePayload.onboarding_completed = false;
-    }
-
-    const { data: updatedRecord, error: updateErr } = await adminSupabase
-      .from('profiles')
-      .update(updatePayload)
-      .eq('id', userId)
-      .select()
-      .single();
-
-    if (updateErr) {
-      console.error('Error executing admin decision in Supabase:', updateErr.message);
+    if (!result?.success) {
       return NextResponse.json(
-        { error: `Failed to save decision: ${updateErr.message}` },
-        { status: 500 }
+        { error: result?.message || 'Failed to save decision.', code: resultCode },
+        { status: statusByCode[resultCode] || 500 }
       );
     }
 
     return NextResponse.json({
       success: true,
-      record: updatedRecord,
+      record: result.profile,
+      organization: result.organization || null,
       decision,
       decidedBy: actingAdmin.id,
-      decidedAt: decisionTime,
+      decidedAt: result.decided_at,
     });
   } catch (error: any) {
     console.error('Unexpected error in POST /api/admin/approvals:', error);
