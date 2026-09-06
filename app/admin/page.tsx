@@ -344,31 +344,30 @@ export default function AdminPage() {
 
     async function fetchAdminData() {
       try {
-        const res = await fetch('/api/request-access');
+        const res = await fetch('/api/admin/requests');
         if (res.ok) {
           const json = await res.json();
           if (Array.isArray(json.requests)) {
             const mapped: AccessRequest[] = json.requests.map((r: any, idx: number) => ({
               id: r.id || `req-${idx}`,
               entityTitle:
-                r.entityTitle ||
-                (r.proposalBrief
-                  ? r.proposalBrief.length > 40
-                    ? r.proposalBrief.slice(0, 40) + '...'
-                    : r.proposalBrief
+                r.catalog?.title ||
+                (r.proposal_brief
+                  ? r.proposal_brief.length > 40
+                    ? r.proposal_brief.slice(0, 40) + '...'
+                    : r.proposal_brief
                   : 'NEXORA Early Access Waitlist'),
-              entityType: r.entityType || (r.proposalBrief ? 'challenge' : 'platform'),
-              requesterName: r.name || r.requesterName || 'Applicant',
-              requesterOrg: r.organization || r.requesterOrg || 'Independent Entity',
-              requesterEmail: r.email || r.requesterEmail || '',
+              entityType: r.catalog?.type || r.request_type || 'platform',
+              requesterName: r.name || 'Applicant',
+              requesterOrg: r.organization || 'Independent Entity',
+              requesterEmail: r.email || '',
               purpose:
-                r.purpose ||
-                (r.proposalBrief ? 'Pilot Due Diligence' : 'Early Access Onboarding'),
-              ndaStatus: r.ndaStatus || 'Pending Signature',
-              dateRequested: r.createdAt
-                ? r.createdAt.split('T')[0]
-                : r.dateRequested || new Date().toISOString().split('T')[0],
-              status: r.status || 'Pending',
+                r.request_type || 'Early Access Onboarding',
+              ndaStatus: 'Pending Signature',
+              dateRequested: r.created_at
+                ? r.created_at.split('T')[0]
+                : new Date().toISOString().split('T')[0],
+              status: r.status === 'approved' ? 'Approved' : r.status === 'rejected' ? 'Rejected' : 'Pending',
             }));
             setRequests(mapped);
           }
@@ -495,36 +494,56 @@ export default function AdminPage() {
   }, [requests, searchQuery]);
 
   // Handlers
-  const handleToggleStatus = (id: string) => {
-    setEntities((prev) =>
-      prev.map((item) => {
-        if (item.id === id) {
-          const nextStatus =
-            item.status === 'Active'
-              ? 'Archived'
-              : item.status === 'Archived'
-              ? 'Active'
-              : item.status === 'Pending Review'
-              ? 'Active'
-              : 'Active';
-          return { ...item, status: nextStatus };
-        }
-        return item;
-      })
-    );
-    showToast('Entity status updated successfully');
+  const handleToggleStatus = async (id: string) => {
+    const item = entities.find((entity) => entity.id === id);
+    if (!item) return;
+    const nextStatus = item.status === 'Active' ? 'Archived' : 'Active';
+    try {
+      const response = await fetch('/api/catalog', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status: nextStatus, publication_state: nextStatus === 'Active' ? 'published' : 'archived' }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to update catalog item.');
+      setEntities((previous) => previous.map((entity) => entity.id === id ? { ...entity, status: data.data.status || nextStatus } : entity));
+      showToast('Entity status updated.');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to update catalog item.');
+    }
   };
 
-  const handleDeleteEntity = (id: string) => {
-    setEntities((prev) => prev.filter((item) => item.id !== id));
-    showToast('Entity removed from registry');
+  const handleDeleteEntity = async (id: string) => {
+    try {
+      const response = await fetch(`/api/catalog?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to remove catalog item.');
+      if (data.archived) {
+        setEntities((previous) => previous.map((entity) => entity.id === id ? { ...entity, status: 'Archived' } : entity));
+        showToast('Entity has related records and was archived.');
+      } else {
+        setEntities((previous) => previous.filter((entity) => entity.id !== id));
+        showToast('Entity removed from registry.');
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to remove catalog item.');
+    }
   };
 
-  const handleRequestAction = (id: string, action: 'Approved' | 'Rejected') => {
-    setRequests((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, status: action } : r))
-    );
-    showToast(`Access Request ${id} has been ${action}`);
+  const handleRequestAction = async (id: string, action: 'Approved' | 'Rejected') => {
+    try {
+      const response = await fetch('/api/admin/requests', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, decision: action.toLowerCase() }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to decide request.');
+      setRequests((previous) => previous.map((request) => request.id === id ? { ...request, status: action } : request));
+      showToast(`Access request ${action.toLowerCase()}.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to decide request.');
+    }
   };
 
   const handleAccountDecision = async (id: string, decision: 'approved' | 'rejected') => {
