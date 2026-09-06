@@ -137,6 +137,18 @@ approval_rpc_check AS (
     AND p.proname IN ('decide_top_level_account_approval', 'decide_organization_employee_approval')
 ),
 
+request_type_check AS (
+  SELECT
+    'Request Workflow Types' AS category,
+    CASE WHEN EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conrelid = 'public.requests'::regclass
+        AND pg_get_constraintdef(oid) LIKE '%challenge_application%'
+        AND pg_get_constraintdef(oid) LIKE '%expert_consultation%'
+    ) THEN 'PASS' ELSE 'FAIL' END AS status,
+    'Challenge and expert request classifications are available' AS details
+),
+
 -- 7. Check security triggers attached
 trigger_check AS (
   SELECT 
@@ -169,6 +181,8 @@ FROM (
   UNION ALL
   SELECT 6 AS ord, * FROM approval_rpc_check
   UNION ALL
-  SELECT 7 AS ord, * FROM trigger_check
+  SELECT 7 AS ord, * FROM request_type_check
+  UNION ALL
+  SELECT 8 AS ord, * FROM trigger_check
 ) sub
 ORDER BY ord;

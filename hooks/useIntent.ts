@@ -1,8 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { getBrowserSupabase, isSupabaseEnabled } from '@/lib/supabaseClient';
-
 export type IntentType =
   | 'bookmark'
   | 'apply_challenge'
@@ -66,124 +64,43 @@ export function removeStoredIntent(): void {
 /**
  * Executes a stored intent payload and triggers corresponding feedback/downloads
  */
-export async function executeIntentPayload(
-  intent: StoredIntent,
-  userEmail?: string
-): Promise<{ success: boolean; message: string }> {
+export async function executeIntentPayload(intent: StoredIntent): Promise<{ success: boolean; message: string }> {
   try {
     switch (intent.type) {
       case 'download_report': {
-        const { reportId, reportTitle, format = 'PDF' } = intent.payload;
-        // Generate and trigger download
-        const blobContent = `NEXORA INTELLIGENCE REPORT
-Document ID: ${reportId || 'RPT-GEN-01'}
-Title: ${reportTitle || intent.title}
-Authorized Recipient: ${userEmail || 'Active Authorized Session'}
-Generated At: ${new Date().toISOString()}
-Security Classification: NEXORA TRL CONFIDENTIAL
-
-[EXECUTIVE SUMMARY]
-This comprehensive analysis validates the empirical scaling parameters, patent lineage, and pilot deployment trajectories.
-
-[IP & TELEMETRY AUDIT]
-- Patent filings confirmed with zero blocking citations.
-- Foundry validation completed across temperature gradients.
-- Independent third-party benchmark verified.
-
-Cleared by NEXORA Platform Core.`;
-
-        const blob = new Blob([blobContent], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${(reportTitle || 'nexora-report').toLowerCase().replace(/[^a-z0-9]/g, '-')}.${format.toLowerCase() === 'pdf' ? 'txt' : format.toLowerCase()}`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-        return {
-          success: true,
-          message: `Intelligence Report "${intent.title}" has been decrypted and downloaded.`,
-        };
+        return submitRequest(intent, 'report_download', 'Report access request submitted.');
       }
 
       case 'bookmark': {
-        const { id, title, type: itemType, category } = intent.payload;
-        const bookmarksRaw = localStorage.getItem('nexora_bookmarks');
-        const bookmarks: any[] = bookmarksRaw ? JSON.parse(bookmarksRaw) : [];
-        
-        if (!bookmarks.some((b) => b.id === id)) {
-          bookmarks.push({
-            id,
-            title: title || intent.title,
-            type: itemType || 'technology',
-            category: category || 'Deep Tech',
-            bookmarkedAt: new Date().toISOString(),
-          });
-          localStorage.setItem('nexora_bookmarks', JSON.stringify(bookmarks));
-        }
-
-        window.dispatchEvent(new CustomEvent('nexora:bookmark-updated', { detail: { id, title } }));
-        return {
-          success: true,
-          message: `Saved "${intent.title}" to your private dossier.`,
-        };
+        const catalogId = typeof intent.payload.catalogId === 'string' ? intent.payload.catalogId : intent.payload.id;
+        if (typeof catalogId !== 'string' || !catalogId) throw new Error('A valid catalog item is required.');
+        const response = await fetch('/api/bookmarks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ catalogId }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Unable to save bookmark.');
+        await fetch('/api/activity', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'bookmark', entityType: intent.payload.type, entityId: catalogId }),
+        });
+        window.dispatchEvent(new CustomEvent('nexora:bookmark-updated', { detail: { id: catalogId, title: intent.title } }));
+        return { success: true, message: `Saved "${intent.title}" to your private dossier.` };
       }
 
       case 'apply_challenge': {
-        const { challengeId, challengeTitle, proposalBrief, budget } = intent.payload;
-        try {
-          await fetch('/api/request-access', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: 'Authenticated Applicant',
-              email: userEmail || 'user@organization.com',
-              entityTitle: challengeTitle || intent.title,
-              entityType: 'challenge_application',
-              proposalBrief: proposalBrief || 'Submitted application via intent execution',
-              roleRequested: 'challenge_solver',
-              tierRequested: 'pilot_grant',
-            }),
-          });
-        } catch {}
-
-        return {
-          success: true,
-          message: `Proposal submitted for "${intent.title}". Corporate sponsor has been notified.`,
-        };
+        return submitRequest(intent, 'challenge_application', `Proposal submitted for "${intent.title}".`);
       }
 
       case 'request_call': {
-        const { expertId, expertName, topic, notes } = intent.payload;
-        try {
-          await fetch('/api/request-access', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: 'Authenticated Researcher',
-              email: userEmail || 'user@organization.com',
-              entityTitle: `Expert Call: ${expertName || intent.title}`,
-              entityType: 'expert_consultation',
-              proposalBrief: `Topic: ${topic || 'Technology Review'}. Notes: ${notes || 'Requested 1-on-1 call.'}`,
-              roleRequested: 'consultation_client',
-            }),
-          });
-        } catch {}
-
-        return {
-          success: true,
-          message: `Consultation request dispatched to ${expertName || intent.title}. Awaiting scheduling clearance.`,
-        };
+        return submitRequest(intent, 'expert_consultation', `Consultation request submitted for "${intent.title}".`);
       }
 
       case 'custom':
       default: {
-        return {
-          success: true,
-          message: `Action "${intent.title}" successfully completed.`,
-        };
+        throw new Error('This deferred action is no longer supported.');
       }
     }
   } catch (err: any) {
@@ -193,6 +110,35 @@ Cleared by NEXORA Platform Core.`;
       message: err?.message || 'Failed to complete deferred action.',
     };
   }
+}
+
+async function submitRequest(
+  intent: StoredIntent,
+  requestType: 'challenge_application' | 'expert_consultation' | 'report_download',
+  message: string
+): Promise<{ success: boolean; message: string }> {
+  const catalogId = typeof intent.payload.catalogId === 'string'
+    ? intent.payload.catalogId
+    : typeof intent.payload.challengeId === 'string'
+    ? intent.payload.challengeId
+    : typeof intent.payload.expertId === 'string'
+    ? intent.payload.expertId
+    : typeof intent.payload.reportId === 'string'
+    ? intent.payload.reportId
+    : null;
+  const proposalBrief = typeof intent.payload.proposalBrief === 'string'
+    ? intent.payload.proposalBrief
+    : typeof intent.payload.notes === 'string'
+    ? intent.payload.notes
+    : `Request regarding ${intent.title}.`;
+  const response = await fetch('/api/requests', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestType, catalogId, proposalBrief, source: 'deferred-intent' }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Unable to submit request.');
+  return { success: true, message };
 }
 
 export function useIntent() {
@@ -220,12 +166,12 @@ export function useIntent() {
   }, []);
 
   const executePendingIntent = useCallback(
-    async (userEmail?: string): Promise<{ success: boolean; message: string } | null> => {
+    async (): Promise<{ success: boolean; message: string } | null> => {
       const current = getStoredIntent();
       if (!current) return null;
 
-      const result = await executeIntentPayload(current, userEmail);
-      clearIntent();
+      const result = await executeIntentPayload(current);
+      if (result.success) clearIntent();
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(

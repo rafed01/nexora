@@ -21,7 +21,6 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/ai-scout') ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/register') ||
-    pathname.startsWith('/rejected') ||
     pathname.startsWith('/api') ||
     pathname.startsWith('/_next') ||
     pathname.includes('.');
@@ -136,7 +135,7 @@ export async function middleware(request: NextRequest) {
   // 8. ONBOARDED USERS ATTEMPTING TO RE-VISIT /onboarding:
   // Forward to /dashboard
   if (pathname === '/onboarding' && (onboardingCompleted || userRole === 'admin')) {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+    return NextResponse.redirect(new URL(userRole === 'admin' ? '/admin' : (userRole === 'enterprise' || userRole === 'company') ? '/dashboard/enterprise' : '/dashboard', request.url));
   }
 
   // 8b. ENTERPRISE ORGANIZATION MANAGEMENT ACCESS CONTROL:
@@ -153,6 +152,13 @@ export async function middleware(request: NextRequest) {
       // Pending enterprise accounts are already redirected to /pending-approval above (step 5);
       // this branch only runs for approved-but-wrong-role or organization-less callers.
       return NextResponse.redirect(new URL('/dashboard', request.url));
+    }
+
+    if (pathname === '/dashboard') {
+      if (userRole === 'admin') return NextResponse.redirect(new URL('/admin', request.url));
+      if ((userRole === 'enterprise' || userRole === 'company') && organizationId) {
+        return NextResponse.redirect(new URL('/dashboard/enterprise', request.url));
+      }
     }
   }
 

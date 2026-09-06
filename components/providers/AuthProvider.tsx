@@ -158,8 +158,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    */
   const requireAuth = useCallback(
     (intent: IntentActionInput, onAuthenticated?: () => void): boolean => {
-      const isAuthed = Boolean(user && profile);
-      if (isAuthed) {
+      const isAuthorized = Boolean(
+        user &&
+        profile &&
+        (profile.role === 'admin' ||
+          (profile.approval_status === 'approved' && profile.onboarding_completed === true))
+      );
+      if (isAuthorized) {
         if (onAuthenticated) onAuthenticated();
         return true;
       }

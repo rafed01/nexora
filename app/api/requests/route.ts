@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser, requireApprovedUser } from '@/lib/supabase/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 
-const requestTypes = new Set(['access_briefing', 'nda', 'collaboration_proposal', 'due_diligence', 'report_download']);
+const requestTypes = new Set(['access_briefing', 'nda', 'collaboration_proposal', 'due_diligence', 'report_download', 'challenge_application', 'expert_consultation']);
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function GET() {
@@ -34,13 +34,18 @@ export async function POST(request: NextRequest) {
     if (!requestTypes.has(requestType)) {
       return NextResponse.json({ error: 'Invalid request type.' }, { status: 400 });
     }
-    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : currentUser?.email || '';
-    const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 255) : currentUser?.full_name || '';
+    const email = currentUser?.email || (typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '');
+    const name = currentUser?.full_name || (typeof body?.name === 'string' ? body.name.trim().slice(0, 255) : '');
     const organization = typeof body?.organization === 'string' ? body.organization.trim().slice(0, 255) : '';
     const proposalBrief = typeof body?.proposalBrief === 'string' ? body.proposalBrief.trim().slice(0, 5000) : '';
     const catalogId = typeof body?.catalogId === 'string' ? body.catalogId.trim() : null;
     if (!emailPattern.test(email) || !name || !proposalBrief) {
       return NextResponse.json({ error: 'Name, valid email, and request details are required.' }, { status: 400 });
+    }
+    if (catalogId) {
+      const { data: catalog, error: catalogError } = await createAdminClient().from('catalog').select('id').eq('id', catalogId).maybeSingle();
+      if (catalogError) throw catalogError;
+      if (!catalog) return NextResponse.json({ error: 'Catalog item not found.' }, { status: 404 });
     }
     const { data, error } = await createAdminClient().from('requests').insert({
       id: crypto.randomUUID(),

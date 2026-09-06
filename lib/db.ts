@@ -561,7 +561,6 @@ export async function saveAccessRequest(data: any): Promise<AccessRequest> {
       .maybeSingle();
 
     if (error) {
-      // Fallback with snake_case schema if camelCase schema rejected
       const { data: fallbackResult, error: fallbackError } = await supabase
         .from('requests')
         .upsert([payload], { onConflict: 'id' })
@@ -569,12 +568,13 @@ export async function saveAccessRequest(data: any): Promise<AccessRequest> {
         .maybeSingle();
 
       if (fallbackError) {
-        console.warn('Supabase error inserting access request:', fallbackError.message);
+        throw new Error('Failed to save access request.');
       } else if (fallbackResult) {
         return fallbackResult as AccessRequest;
       }
     }
-    return (result as AccessRequest) || newRequest;
+    if (!result) throw new Error('Failed to save access request.');
+    return result as AccessRequest;
   }
 
   // Local JSON Mode
@@ -598,12 +598,7 @@ export async function getAccessRequests(): Promise<AccessRequest[]> {
       .select('*');
 
     if (error) {
-      console.warn('Supabase error fetching access requests:', error.message);
-      try {
-        const localDb = await ensureDbFile();
-        if (localDb.requests?.length > 0) return localDb.requests;
-      } catch {}
-      return DEFAULT_REQUEST_SEEDS;
+      throw new Error('Failed to retrieve access requests.');
     }
 
     const items = (data || []).map((req: any) => ({
@@ -638,15 +633,12 @@ export async function getCatalog(): Promise<CatalogItem[]> {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('catalog')
-      .select('*');
+      .select('*')
+      .eq('publication_state', 'published')
+      .eq('status', 'Active');
 
     if (error) {
-      console.warn('Supabase error fetching catalog:', error.message);
-      try {
-        const localDb = await ensureDbFile();
-        if (localDb.catalog?.length > 0) return localDb.catalog;
-      } catch {}
-      return DEFAULT_CATALOG_SEEDS;
+      throw new Error('Failed to retrieve catalog items.');
     }
 
     const items = (data || []).map((item: any) => ({
@@ -702,12 +694,13 @@ export async function saveCatalogItem(item: any): Promise<CatalogItem> {
         .maybeSingle();
 
       if (fallbackError) {
-        console.warn('Supabase error saving catalog item:', fallbackError.message);
+        throw new Error('Failed to save catalog item.');
       } else if (fallbackResult) {
         return fallbackResult as CatalogItem;
       }
     }
-    return (result as CatalogItem) || newItem;
+    if (!result) throw new Error('Failed to save catalog item.');
+    return result as CatalogItem;
   }
 
   // Local JSON Mode
