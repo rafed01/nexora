@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   Sparkles,
@@ -48,6 +48,7 @@ interface ScoutResult {
   keyMetric: { label: string; value: string };
   tags: string[];
   statusNote: string;
+  link: string;
 }
 
 interface SavedItem {
@@ -66,6 +67,131 @@ interface ActivityItem {
   timestamp: string;
   matchesFound: number;
   domain: string;
+}
+
+type ScoutApiMetric = {
+  label?: unknown;
+  value?: unknown;
+};
+
+type ScoutApiRecommendation = {
+  id?: unknown;
+  type?: unknown;
+  title?: unknown;
+  category?: unknown;
+  trl?: unknown;
+  summary?: unknown;
+  keyMetrics?: unknown;
+  relevanceScore?: unknown;
+  relevanceRationale?: unknown;
+  recommendedAction?: unknown;
+  link?: unknown;
+};
+
+type ScoutApiResponse = {
+  executiveSummary?: unknown;
+  detectedDomain?: unknown;
+  keyVectors?: unknown;
+  recommendations?: unknown;
+  analysisTimeMs?: unknown;
+};
+
+const SCOUT_TYPE_LABELS: Record<string, ScoutResult['type']> = {
+  technology: 'Technology',
+  startup: 'Startup Lab',
+  expert: 'Expert',
+  challenge: 'Challenge',
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getString(value: unknown, fallback = '') {
+  return typeof value === 'string' ? value.trim() || fallback : fallback;
+}
+
+function getNumber(value: unknown, fallback: number, min: number, max: number) {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(parsed)));
+}
+
+function getStringArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function getScoutLink(link: unknown, fallbackType: ScoutResult['type']) {
+  const normalized = getString(link);
+  if (normalized.startsWith('/')) return normalized;
+  if (normalized) return `/${normalized.replace(/^\/+/, '')}`;
+  return fallbackType === 'Challenge' ? '/challenges' : '/explore';
+}
+
+function mapActivityEntry(entry: unknown): ActivityItem | null {
+  if (!isRecord(entry)) return null;
+  const metadata = isRecord(entry.metadata) ? entry.metadata : {};
+  return {
+    id: getString(entry.id, `activity-${Date.now()}`),
+    query: getString(metadata.query, getString(entry.entity_id, 'Scouting query')),
+    timestamp: getString(entry.created_at)
+      ? new Date(getString(entry.created_at)).toLocaleString()
+      : 'Just now',
+    matchesFound: getNumber(metadata.matchesFound, 0, 0, 999),
+    domain: getString(metadata.domain, 'AI Scout'),
+  };
+}
+
+function mapScoutResults(payload: unknown): { results: ScoutResult[]; detectedDomain: string; executiveSummary: string; analysisTimeMs: number } {
+  const response = isRecord(payload) ? payload as ScoutApiResponse : {};
+  const detectedDomain = getString(response.detectedDomain, 'AI Scout');
+  const executiveSummary = getString(response.executiveSummary, 'Scouting intelligence briefing compiled.');
+  const keyVectors = getStringArray(response.keyVectors);
+  const analysisTimeMs = getNumber(response.analysisTimeMs, 0, 0, 600000);
+
+  const results = (Array.isArray(response.recommendations) ? response.recommendations : [])
+    .map((recommendation, index) => {
+      if (!isRecord(recommendation)) return null;
+      const candidate = recommendation as ScoutApiRecommendation;
+      const type = SCOUT_TYPE_LABELS[getString(candidate.type).toLowerCase()] || 'Technology';
+      const trl = getNumber(candidate.trl, 6, 1, 9);
+      const keyMetrics = (Array.isArray(candidate.keyMetrics) ? candidate.keyMetrics : [])
+        .map((metric) => {
+          if (!isRecord(metric)) return null;
+          const { label, value } = metric as ScoutApiMetric;
+          const metricLabel = getString(label);
+          const metricValue = getString(value);
+          if (!metricLabel || !metricValue) return null;
+          return { label: metricLabel, value: metricValue };
+        })
+        .filter((metric): metric is { label: string; value: string } => Boolean(metric));
+      const fallbackCategory = type === 'Challenge' ? 'Open Innovation Challenge' : detectedDomain;
+      const tags = [...keyMetrics.map((metric) => metric.label), ...keyVectors]
+        .filter(Boolean)
+        .filter((tag, tagIndex, source) => source.indexOf(tag) === tagIndex)
+        .slice(0, 3);
+
+      return {
+        id: getString(candidate.id, `ai-scout-result-${index + 1}`),
+        title: getString(candidate.title, `AI Scout Recommendation ${index + 1}`),
+        type,
+        category: getString(candidate.category, fallbackCategory),
+        trl,
+        matchScore: getNumber(candidate.relevanceScore, 85, 0, 100),
+        summary: getString(candidate.summary, executiveSummary),
+        keyMetric: keyMetrics[0] || { label: 'Readiness', value: `TRL ${trl}` },
+        tags: tags.length > 0 ? tags : ['AI Scout', 'Verified', `TRL ${trl}`],
+        statusNote: getString(candidate.recommendedAction, getString(candidate.relevanceRationale, 'Review AI Scout recommendation details.')),
+        link: getScoutLink(candidate.link, type),
+      } satisfies ScoutResult;
+    })
+    .filter((result): result is ScoutResult => Boolean(result));
+
+  return { results, detectedDomain, executiveSummary, analysisTimeMs };
 }
 
 const PRESET_QUERIES = [
@@ -87,109 +213,14 @@ const PRESET_QUERIES = [
   },
 ];
 
-const INITIAL_RECOMMENDATIONS: ScoutResult[] = [
-  {
-    id: 'scout-1',
-    title: 'Photonic Matrix Processing Unit (P-MPU)',
-    type: 'Technology',
-    category: 'Optical Computing',
-    trl: 6,
-    matchScore: 98,
-    summary:
-      'Demonstrated 42.8 TOPS/W tensor compute density via sub-picosecond optical interference with standard foundry tapeout compatibility.',
-    keyMetric: { label: 'Compute Density', value: '42.8 TOPS/W' },
-    tags: ['Silicon Photonics', 'CPO', 'Sub-Watt Computing'],
-    statusNote: 'Wafer pilot certified at IMEC',
-  },
-  {
-    id: 'scout-2',
-    title: 'Novavolt Dry-Coated Solid Separators',
-    type: 'Challenge',
-    category: 'Advanced Mobility OEM',
-    trl: 5,
-    matchScore: 94,
-    summary:
-      'Corporate challenge offering €450k funded pilot for dry-spraying argyrodite sulfide powder with <3% thickness variance.',
-    keyMetric: { label: 'Pilot Allocation', value: '€450,000' },
-    tags: ['Roll-to-Roll', 'Solvent-Free', 'High-Nickel'],
-    statusNote: 'Proposal review closes Nov 15',
-  },
-  {
-    id: 'scout-3',
-    title: 'Aetherion High-Altitude Pseudo-Satellites',
-    type: 'Startup Lab',
-    category: 'Autonomous Aerospace',
-    trl: 7,
-    matchScore: 91,
-    summary:
-      'Long-endurance solar aircraft governed by decentralized edge-swarm consensus algorithms for disaster telemetry.',
-    keyMetric: { label: 'Max Endurance', value: '62 Days Continual' },
-    tags: ['Swarm Autonomy', 'HAPS', 'Decentralized Guidance'],
-    statusNote: 'Series A funded ($18.5M)',
-  },
-];
-
-const INITIAL_SAVED_ITEMS: SavedItem[] = [
-  {
-    id: 'saved-1',
-    title: 'High-Purity Argyrodite Solid Electrolyte',
-    category: 'Energy Storage',
-    type: 'Technology',
-    trl: 7,
-    savedAt: '2 days ago',
-    updateAlert: 'New pilot pouch cell data added (450 Wh/kg)',
-  },
-  {
-    id: 'saved-2',
-    title: 'Dr. Elena Rostova',
-    category: 'Quantum Optics',
-    type: 'Expert Profile',
-    trl: 9,
-    savedAt: '5 days ago',
-    updateAlert: 'Available for Q4 architecture audits',
-  },
-  {
-    id: 'saved-3',
-    title: 'Sub-Femtojoule Optical Transceivers JDA',
-    category: 'Cloud Infrastructure',
-    type: 'Corporate Challenge',
-    trl: 6,
-    savedAt: '1 week ago',
-    updateAlert: 'Sponsor added tapeout silicon access grant',
-  },
-];
-
-const INITIAL_ACTIVITIES: ActivityItem[] = [
-  {
-    id: 'act-1',
-    query: 'High-temperature solid state battery electrolytes with >10 mS/cm',
-    timestamp: '15 mins ago',
-    matchesFound: 6,
-    domain: 'Energy Materials',
-  },
-  {
-    id: 'act-2',
-    query: 'Silicon photonics transceivers for 3.2 Tbps aggregate CPO racks',
-    timestamp: '2 hours ago',
-    matchesFound: 4,
-    domain: 'Optical Hardware',
-  },
-  {
-    id: 'act-3',
-    query: 'Swarm consensus algorithms under severe packet degradation',
-    timestamp: 'Yesterday',
-    matchesFound: 8,
-    domain: 'Robotics & Control',
-  },
-];
-
 export default function DashboardScoutPage() {
   const { user, profile, signOut } = useAuth();
   const [prompt, setPrompt] = useState('');
   const [isScouting, setIsScouting] = useState(false);
-  const [scoutedResults, setScoutedResults] = useState<ScoutResult[]>(INITIAL_RECOMMENDATIONS);
-  const [savedItems, setSavedItems] = useState<SavedItem[]>(INITIAL_SAVED_ITEMS);
-  const [activities, setActivities] = useState<ActivityItem[]>(INITIAL_ACTIVITIES);
+  const [scoutedResults, setScoutedResults] = useState<ScoutResult[]>([]);
+  const [savedItems, setSavedItems] = useState<SavedItem[]>([]);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [scoutFeedback, setScoutFeedback] = useState<string | null>(null);
 
   const userProfile: {
@@ -204,194 +235,154 @@ export default function DashboardScoutPage() {
     organization: profile?.organization || undefined,
   };
 
-  // Handle scouting execution
-  const handleExecuteScout = (customPrompt?: string) => {
-    const queryToRun = customPrompt || prompt;
-    if (!queryToRun.trim()) return;
+  useEffect(() => {
+    let active = true;
+    async function loadWorkspaceData() {
+      try {
+        const [bookmarksResponse, activityResponse] = await Promise.all([
+          fetch('/api/bookmarks'),
+          fetch('/api/activity'),
+        ]);
+        if (!bookmarksResponse.ok || !activityResponse.ok) throw new Error('Unable to load workspace data.');
+        const [bookmarkData, activityData] = await Promise.all([bookmarksResponse.json(), activityResponse.json()]);
+        if (!active) return;
+        setSavedItems((bookmarkData.bookmarks || []).map((bookmark: any) => ({
+          id: bookmark.catalog_id,
+          title: bookmark.catalog?.title || bookmark.catalog_id,
+          category: bookmark.catalog?.category || 'Uncategorized',
+          type: bookmark.catalog?.type || 'Catalog item',
+          trl: bookmark.catalog?.trl || 0,
+          savedAt: new Date(bookmark.created_at).toLocaleDateString(),
+          updateAlert: bookmark.notes || undefined,
+        })));
+        setActivities((activityData.activity || []).filter((entry: any) => entry.action === 'scout_query').map((entry: any) => ({
+          id: entry.id,
+          query: entry.metadata?.query || entry.entity_id || 'Scouting query',
+          timestamp: new Date(entry.created_at).toLocaleString(),
+          matchesFound: entry.metadata?.matchesFound || 0,
+          domain: entry.metadata?.domain || 'AI Scout',
+        })));
+      } catch (loadError) {
+        if (active) setDataError(loadError instanceof Error ? loadError.message : 'Unable to load workspace data.');
+      }
+    }
+    void loadWorkspaceData();
+    return () => { active = false; };
+  }, []);
+
+  const handleExecuteScout = async (customPrompt?: string) => {
+    const queryToRun = (customPrompt || prompt).trim();
+    if (!queryToRun || isScouting) return;
 
     setIsScouting(true);
+    setDataError(null);
     setScoutFeedback(null);
 
-    // Simulate guided technology vector synthesis
-    setTimeout(() => {
-      const newActivity: ActivityItem = {
-        id: `act-${Date.now()}`,
-        query: queryToRun,
-        timestamp: 'Just now',
-        matchesFound: 3,
-        domain: 'Frontier Deep-Tech',
-      };
-      setActivities((prev) => [newActivity, ...prev.slice(0, 5)]);
+    try {
+      const response = await fetch('/api/ai-scout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: queryToRun }),
+      });
+      const payload = await response.json().catch(() => null);
 
-      // Synthesize specific recommendation dynamic based on query keywords
-      const lower = queryToRun.toLowerCase();
-      let synthesized: ScoutResult[];
-
-      if (lower.includes('battery') || lower.includes('electrolyte') || lower.includes('solid')) {
-        synthesized = [
-          {
-            id: `scout-${Date.now()}-1`,
-            title: 'High-Purity Argyrodite Solid Electrolyte',
-            type: 'Technology',
-            category: 'Advanced Energy Storage',
-            trl: 7,
-            matchScore: 99,
-            summary:
-              'Sulfide crystal matrix preventing lithium dendrite formation at >12 mA/cm² with dry electrode compatibility.',
-            keyMetric: { label: 'Conductivity', value: '14.2 mS/cm' },
-            tags: ['Argyrodite', 'Lithium Metal', 'Dry-Process'],
-            statusNote: 'Operational environment demo verified',
-          },
-          {
-            id: `scout-${Date.now()}-2`,
-            title: 'Novavolt Dry-Coated Solid Separators',
-            type: 'Challenge',
-            category: 'EV & Mobility OEM',
-            trl: 5,
-            matchScore: 95,
-            summary:
-              '€450k funded corporate challenge seeking dry-spray powder coating with under 3% thickness variance.',
-            keyMetric: { label: 'Award', value: '€450,000' },
-            tags: ['Roll-to-Roll', 'Manufacturing', 'Automotive OEM'],
-            statusNote: 'Accepting technical applications',
-          },
-          {
-            id: `scout-${Date.now()}-3`,
-            title: 'Marcus Vance, PhD',
-            type: 'Expert',
-            category: 'Solid-State Electrochemistry',
-            trl: 8,
-            matchScore: 92,
-            summary:
-              'Stanford Materials Lab veteran who spearheaded 4 battery gigafactory dry-coating production lines.',
-            keyMetric: { label: 'Patents', value: '26 Patents' },
-            tags: ['Roll-to-Roll Scale', 'Battery Chemistry', 'Advisory'],
-            statusNote: 'Available for scale feasibility audits',
-          },
-        ];
-      } else if (lower.includes('swarm') || lower.includes('robot') || lower.includes('drone')) {
-        synthesized = [
-          {
-            id: `scout-${Date.now()}-1`,
-            title: 'Fault-Tolerant Consensus for Swarm Robotics',
-            type: 'Challenge',
-            category: 'Aerospace Systems Prime',
-            trl: 6,
-            matchScore: 98,
-            summary:
-              '$300k non-dilutive R&D grant for multi-agent formation self-healing under 60% intermittent packet loss.',
-            keyMetric: { label: 'R&D Grant', value: '$300,000' },
-            tags: ['Byzantine Fault', 'Mesh Gossip', 'Safety Bounds'],
-            statusNote: 'Rolling technical review active',
-          },
-          {
-            id: `scout-${Date.now()}-2`,
-            title: 'Aetherion High-Altitude Autonomous Swarms',
-            type: 'Startup Lab',
-            category: 'Aerospace Systems',
-            trl: 7,
-            matchScore: 96,
-            summary:
-              'Pseudo-satellite formations operating decentralized edge-swarm consensus for communications.',
-            keyMetric: { label: 'Altitude Record', value: '68,000 ft' },
-            tags: ['HAPS', 'Autonomous Swarm', 'Series A'],
-            statusNote: 'Flight envelope verified in European airspace',
-          },
-          {
-            id: `scout-${Date.now()}-3`,
-            title: 'Dr. Kaviya Chen',
-            type: 'Expert',
-            category: 'Decentralized Robotics',
-            trl: 8,
-            matchScore: 91,
-            summary:
-              'MIT CSAIL architect specializing in formally verified multi-agent consensus in GPS-denied environments.',
-            keyMetric: { label: 'Citations', value: '8,900+' },
-            tags: ['SLAM', 'Formal Verification', 'Edge Autonomy'],
-            statusNote: 'Accepting research residencies',
-          },
-        ];
-      } else {
-        synthesized = [
-          {
-            id: `scout-${Date.now()}-1`,
-            title: 'Photonic Matrix Processing Unit (P-MPU)',
-            type: 'Technology',
-            category: 'Optical Computing',
-            trl: 6,
-            matchScore: 97,
-            summary:
-              'Photonic accelerator performing tensor arithmetic at lightspeed with sub-picosecond optical waveguides.',
-            keyMetric: { label: 'Compute Density', value: '42.8 TOPS/W' },
-            tags: ['Silicon Photonics', 'Interferometry', 'CPO'],
-            statusNote: 'Tapeout validated on 300mm wafers',
-          },
-          {
-            id: `scout-${Date.now()}-2`,
-            title: 'Sub-Femtojoule Optical Transceivers for Clusters',
-            type: 'Challenge',
-            category: 'Cloud Infrastructure Group',
-            trl: 6,
-            matchScore: 94,
-            summary:
-              '$750k joint development agreement addressing inter-rack thermal bottlenecks in high-density AI clusters.',
-            keyMetric: { label: 'JDA Budget', value: '$750,000' },
-            tags: ['Co-Packaged Optics', 'HPC Clusters', 'Thermal'],
-            statusNote: 'Silicon prototype demonstration required',
-          },
-          {
-            id: `scout-${Date.now()}-3`,
-            title: 'Dr. Elena Rostova',
-            type: 'Expert',
-            category: 'Photonic Architecture & Quantum Optics',
-            trl: 9,
-            matchScore: 90,
-            summary:
-              'Max Planck Institute fellow with 18+ years leading optoelectronic hardware transitions from lab to industrial fab.',
-            keyMetric: { label: 'h-index', value: '54' },
-            tags: ['Foundry Packaging', 'Entanglement', 'Audits'],
-            statusNote: 'Open for architecture reviews',
-          },
-        ];
+      if (!response.ok) {
+        const apiError = isRecord(payload) ? getString(payload.error) : '';
+        throw new Error(apiError || 'Unable to run AI Scout query.');
       }
 
-      setScoutedResults(synthesized);
-      setIsScouting(false);
+      const { results, detectedDomain, executiveSummary, analysisTimeMs } = mapScoutResults(payload);
+      setScoutedResults(results);
       setScoutFeedback(
-        `Scouted 1,240 technological artifacts across global patent registries, research consortia, and corporate briefs. Filtered 3 high-confidence vectors.`
+        `${detectedDomain} intelligence compiled with ${results.length} ranked recommendation${results.length === 1 ? '' : 's'}${analysisTimeMs > 0 ? ` in ${analysisTimeMs} ms` : ''}. ${executiveSummary}`
       );
-    }, 600);
+
+      try {
+        const activityResponse = await fetch('/api/activity', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'scout_query',
+            entityId: queryToRun,
+            metadata: {
+              query: queryToRun,
+              domain: detectedDomain,
+              matchesFound: results.length,
+            },
+          }),
+        });
+        const activityPayload = await activityResponse.json().catch(() => null);
+        if (activityResponse.ok && isRecord(activityPayload)) {
+          const newActivity = mapActivityEntry(activityPayload.activity);
+          if (newActivity) {
+            setActivities((previous) => [newActivity, ...previous.filter((item) => item.id !== newActivity.id)].slice(0, 20));
+          }
+        }
+      } catch (activityError) {
+        console.error('Error recording scout activity:', activityError);
+      }
+    } catch (scoutError) {
+      setDataError(scoutError instanceof Error ? scoutError.message : 'Unable to run AI Scout query.');
+    } finally {
+      setIsScouting(false);
+    }
   };
 
   const handleApplyPreset = (presetPrompt: string) => {
     setPrompt(presetPrompt);
-    handleExecuteScout(presetPrompt);
+    void handleExecuteScout(presetPrompt);
   };
 
-  const toggleSaveItem = (item: ScoutResult) => {
+  const toggleSaveItem = async (item: ScoutResult) => {
     const isSaved = savedItems.some((s) => s.id === item.id);
-    if (isSaved) {
-      setSavedItems(savedItems.filter((s) => s.id !== item.id));
-    } else {
-      const newItem: SavedItem = {
-        id: item.id,
-        title: item.title,
-        category: item.category,
-        type: item.type,
-        trl: item.trl,
-        savedAt: 'Just now',
-        updateAlert: item.statusNote,
-      };
-      setSavedItems([newItem, ...savedItems]);
+    setDataError(null);
+    try {
+      const response = await fetch(isSaved ? `/api/bookmarks?catalogId=${encodeURIComponent(item.id)}` : '/api/bookmarks', {
+        method: isSaved ? 'DELETE' : 'POST',
+        headers: isSaved ? undefined : { 'Content-Type': 'application/json' },
+        body: isSaved ? undefined : JSON.stringify({ catalogId: item.id }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const apiError = isRecord(data) ? getString(data.error) : '';
+        if (!isSaved && (response.status === 404 || apiError === 'Catalog item not found.')) {
+          throw new Error('This AI Scout recommendation is not catalog-backed yet, so it cannot be saved.');
+        }
+        throw new Error(apiError || 'Unable to update bookmark.');
+      }
+      if (isSaved) {
+        setSavedItems((items) => items.filter((saved) => saved.id !== item.id));
+      } else {
+        const newItem: SavedItem = {
+          id: item.id,
+          title: item.title,
+          category: item.category,
+          type: item.type,
+          trl: item.trl,
+          savedAt: 'Just now',
+          updateAlert: item.statusNote,
+        };
+        setSavedItems((items) => [newItem, ...items]);
+      }
+    } catch (bookmarkError) {
+      setDataError(bookmarkError instanceof Error ? bookmarkError.message : 'Unable to update bookmark.');
     }
   };
 
-  const removeSavedItem = (id: string) => {
-    setSavedItems(savedItems.filter((item) => item.id !== id));
+  const removeSavedItem = async (id: string) => {
+    try {
+      const response = await fetch(`/api/bookmarks?catalogId=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to remove bookmark.');
+      setSavedItems((items) => items.filter((item) => item.id !== id));
+    } catch (bookmarkError) {
+      setDataError(bookmarkError instanceof Error ? bookmarkError.message : 'Unable to remove bookmark.');
+    }
   };
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col selection:bg-cyan-500/20 selection:text-cyan-200">
+      {dataError && <div className="mx-auto mt-4 w-full max-w-7xl rounded-lg border border-rose-900 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">{dataError}</div>}
       {/* Top RBAC Command Bar */}
       <div className="border-b border-neutral-900 bg-neutral-950/80 backdrop-blur-md sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-between text-xs font-mono">
@@ -491,7 +482,7 @@ export default function DashboardScoutPage() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              handleExecuteScout();
+              void handleExecuteScout();
             }}
             className="space-y-4"
           >
@@ -583,107 +574,105 @@ export default function DashboardScoutPage() {
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {scoutedResults.map((result) => {
-              const isSaved = savedItems.some((s) => s.id === result.id);
-              return (
-                <div
-                  key={result.id}
-                  id={`card-${result.id}`}
-                  className="p-6 rounded-xl bg-neutral-900/50 border border-neutral-800 hover:border-neutral-700 transition-all flex flex-col justify-between"
-                >
-                  <div>
-                    {/* Top Row: Type & Match Score */}
-                    <div className="flex items-center justify-between gap-2 mb-3">
-                      <span className="text-xs font-mono px-2 py-0.5 rounded bg-neutral-800 text-neutral-300 border border-neutral-700/60">
-                        {result.type}
-                      </span>
+          {scoutedResults.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-neutral-800 bg-neutral-900/30 px-6 py-10 text-center text-sm text-neutral-400">
+              Run AI Scout to surface live recommendations from the platform intelligence endpoint.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {scoutedResults.map((result) => {
+                const isSaved = savedItems.some((s) => s.id === result.id);
+                return (
+                  <div
+                    key={result.id}
+                    id={`card-${result.id}`}
+                    className="p-6 rounded-xl bg-neutral-900/50 border border-neutral-800 hover:border-neutral-700 transition-all flex flex-col justify-between"
+                  >
+                    <div>
+                      {/* Top Row: Type & Match Score */}
+                      <div className="flex items-center justify-between gap-2 mb-3">
+                        <span className="text-xs font-mono px-2 py-0.5 rounded bg-neutral-800 text-neutral-300 border border-neutral-700/60">
+                          {result.type}
+                        </span>
 
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-bold text-cyan-400">
-                          {result.matchScore}% Match
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-mono font-bold text-cyan-400">
+                            {result.matchScore}% Match
+                          </span>
+                          <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-emerald-950 border border-emerald-500/40 text-emerald-300">
+                            TRL {result.trl}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="text-xs font-mono text-cyan-400/90 mb-1">{result.category}</div>
+
+                      <h3 className="text-base font-bold text-neutral-100 leading-snug mb-2">
+                        {result.title}
+                      </h3>
+
+                      <p className="text-xs text-neutral-400 leading-relaxed line-clamp-3">
+                        {result.summary}
+                      </p>
+
+                      {/* Metric Box */}
+                      <div className="mt-4 p-2.5 rounded-lg bg-neutral-950 border border-neutral-800/80 flex items-center justify-between text-xs">
+                        <span className="text-neutral-400 font-mono">{result.keyMetric.label}</span>
+                        <span className="font-mono font-semibold text-cyan-300">
+                          {result.keyMetric.value}
                         </span>
-                        <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-emerald-950 border border-emerald-500/40 text-emerald-300">
-                          TRL {result.trl}
-                        </span>
+                      </div>
+
+                      {/* Tags */}
+                      <div className="mt-3 flex flex-wrap gap-1">
+                        {result.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-800/60 text-neutral-300"
+                          >
+                            #{tag}
+                          </span>
+                        ))}
                       </div>
                     </div>
 
-                    <div className="text-xs font-mono text-cyan-400/90 mb-1">{result.category}</div>
+                    {/* Card Bottom Actions */}
+                    <div className="mt-5 pt-4 border-t border-neutral-800/80 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleSaveItem(result)}
+                        className={`inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded transition-colors cursor-pointer ${
+                          isSaved
+                            ? 'bg-neutral-800 text-cyan-300 border border-neutral-700'
+                            : 'text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800'
+                        }`}
+                      >
+                        {isSaved ? (
+                          <>
+                            <BookmarkCheck className="w-3.5 h-3.5 text-cyan-400" />
+                            <span>Saved</span>
+                          </>
+                        ) : (
+                          <>
+                            <Bookmark className="w-3.5 h-3.5" />
+                            <span>Save</span>
+                          </>
+                        )}
+                      </button>
 
-                    <h3 className="text-base font-bold text-neutral-100 leading-snug mb-2">
-                      {result.title}
-                    </h3>
-
-                    <p className="text-xs text-neutral-400 leading-relaxed line-clamp-3">
-                      {result.summary}
-                    </p>
-
-                    {/* Metric Box */}
-                    <div className="mt-4 p-2.5 rounded-lg bg-neutral-950 border border-neutral-800/80 flex items-center justify-between text-xs">
-                      <span className="text-neutral-400 font-mono">{result.keyMetric.label}</span>
-                      <span className="font-mono font-semibold text-cyan-300">
-                        {result.keyMetric.value}
-                      </span>
-                    </div>
-
-                    {/* Tags */}
-                    <div className="mt-3 flex flex-wrap gap-1">
-                      {result.tags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-800/60 text-neutral-300"
-                        >
-                          #{tag}
-                        </span>
-                      ))}
+                      <Link
+                        href={result.link}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 transition-colors"
+                      >
+                        <span>Explore Vector</span>
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                      </Link>
                     </div>
                   </div>
-
-                  {/* Card Bottom Actions */}
-                  <div className="mt-5 pt-4 border-t border-neutral-800/80 flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={() => toggleSaveItem(result)}
-                      className={`inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded transition-colors cursor-pointer ${
-                        isSaved
-                          ? 'bg-neutral-800 text-cyan-300 border border-neutral-700'
-                          : 'text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800'
-                      }`}
-                    >
-                      {isSaved ? (
-                        <>
-                          <BookmarkCheck className="w-3.5 h-3.5 text-cyan-400" />
-                          <span>Saved</span>
-                        </>
-                      ) : (
-                        <>
-                          <Bookmark className="w-3.5 h-3.5" />
-                          <span>Save</span>
-                        </>
-                      )}
-                    </button>
-
-                    <Link
-                      href={
-                        result.type === 'Challenge'
-                          ? '/challenges'
-                          : result.title.toLowerCase().includes('photonic')
-                          ? '/technology/tech-photonic-mpu'
-                          : result.title.toLowerCase().includes('electrolyte')
-                          ? '/technology/tech-solid-state-electrolyte'
-                          : '/explore'
-                      }
-                      className="inline-flex items-center gap-1 text-xs font-semibold text-cyan-400 hover:text-cyan-300 transition-colors"
-                    >
-                      <span>Explore Vector</span>
-                      <ArrowUpRight className="w-3.5 h-3.5" />
-                    </Link>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </section>
 
         {/* Saved Items & Recent Scouting Activity Grid */}

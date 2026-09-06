@@ -19,8 +19,8 @@ const NAV_LINKS = [
   { name: "Challenges", href: "/challenges" },
   { name: "Reports", href: "/reports" },
   { name: "AI Scout", href: "/ai-scout" },
-  { name: "Dashboard", href: "/dashboard" },
-  { name: "Admin", href: "/admin" },
+  { name: "Dashboard", href: "/dashboard", authenticated: true },
+  { name: "Settings", href: "/settings", authenticated: true },
 ];
 
 export default function Navbar() {
@@ -44,7 +44,7 @@ export default function Navbar() {
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex md:items-center md:space-x-6 lg:space-x-7">
-            {NAV_LINKS.map((link) => (
+            {NAV_LINKS.filter((link) => !link.authenticated || isAuthenticated).map((link) => (
               <Link
                 key={link.name}
                 href={link.href}
@@ -58,6 +58,11 @@ export default function Navbar() {
                 {link.name}
               </Link>
             ))}
+            {profile?.role === 'admin' && (
+              <Link href="/admin" className={cn("text-xs font-mono uppercase tracking-wider transition-colors hover:text-white", pathname === '/admin' ? "text-cyan-400 font-semibold" : "text-neutral-400")}>
+                Admin
+              </Link>
+            )}
           </div>
 
           {/* Desktop Auth Controls */}
@@ -126,7 +131,7 @@ export default function Navbar() {
       {isOpen && (
         <div className="md:hidden bg-neutral-950 border-b border-white/10">
           <div className="px-4 pt-2 pb-4 space-y-1 sm:px-6">
-            {NAV_LINKS.map((link) => (
+            {NAV_LINKS.filter((link) => !link.authenticated || isAuthenticated).map((link) => (
               <Link
                 key={link.name}
                 href={link.href}
@@ -141,6 +146,11 @@ export default function Navbar() {
                 {link.name}
               </Link>
             ))}
+            {profile?.role === 'admin' && (
+              <Link href="/admin" onClick={() => setIsOpen(false)} className={cn("block px-3 py-2 rounded-md text-sm font-mono uppercase tracking-wider transition-colors", pathname === '/admin' ? "bg-neutral-800 text-cyan-400 font-semibold" : "text-neutral-400 hover:bg-neutral-800 hover:text-white")}>
+                Admin
+              </Link>
+            )}
 
             <div className="pt-4 border-t border-neutral-800/80 flex flex-col gap-2">
               {isAuthenticated ? (

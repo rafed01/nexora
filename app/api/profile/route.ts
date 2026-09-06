@@ -69,22 +69,8 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { id, email } = body;
-
-    if (!id || !email) {
-      return NextResponse.json(
-        { error: 'id and email are required to save profile.' },
-        { status: 400 }
-      );
-    }
-
-    // A user can only update their own profile unless platform admin
-    if (currentUser.role !== 'admin' && currentUser.id !== id) {
-      return NextResponse.json(
-        { error: 'Forbidden: You can only modify your own profile.' },
-        { status: 403 }
-      );
-    }
+    const id = currentUser.id;
+    const email = currentUser.email;
 
     // Role, approval and organization authority are exclusively managed by the
     // dedicated server-side approval flows, never this browser payload.
@@ -92,26 +78,28 @@ export async function POST(request: NextRequest) {
     const enforcedRole = existingProfile?.role || currentUser.role || 'user';
     const enforcedStatus = existingProfile?.approval_status || currentUser.approval_status || 'pending';
 
+    const safeText = (value: unknown, limit: number) =>
+      typeof value === 'string' ? value.trim().slice(0, limit) : undefined;
     const saved = await saveProfile({
       id,
       email,
-      full_name: body.full_name,
-      organization: body.organization,
-      company_name: body.company_name,
+      full_name: safeText(body.full_name, 255),
+      organization: safeText(body.organization, 255),
+      company_name: safeText(body.company_name, 255),
       role: enforcedRole,
       approval_status: enforcedStatus,
       status: existingProfile?.status || enforcedStatus,
-      focus_area: body.focus_area,
-      domain_expertise: body.domain_expertise,
-      credentials: body.credentials,
-      tax_id: body.tax_id,
-      company_size: body.company_size,
-      industry: body.industry,
-      avatar_url: body.avatar_url,
-      tech_stack: body.tech_stack,
-      bio: body.bio,
-      timezone: body.timezone,
-      onboarding_completed: body.onboarding_completed,
+      focus_area: safeText(body.focus_area, 1000),
+      domain_expertise: safeText(body.domain_expertise, 1000),
+      credentials: safeText(body.credentials, 2000),
+      tax_id: safeText(body.tax_id, 255),
+      company_size: safeText(body.company_size, 100),
+      industry: safeText(body.industry, 255),
+      avatar_url: safeText(body.avatar_url, 2000),
+      tech_stack: Array.isArray(body.tech_stack) ? body.tech_stack.filter((tag: unknown) => typeof tag === 'string').map((tag: string) => tag.trim().slice(0, 100)).slice(0, 30) : undefined,
+      bio: safeText(body.bio, 5000),
+      timezone: safeText(body.timezone, 100),
+      onboarding_completed: existingProfile?.onboarding_completed ?? false,
     });
 
     return NextResponse.json(
