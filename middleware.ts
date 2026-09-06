@@ -45,11 +45,12 @@ export async function middleware(request: NextRequest) {
   let userRole: UserRole = 'user';
   let userStatus: UserStatus = 'pending';
   let onboardingCompleted = false;
+  let organizationId: string | null = null;
 
   try {
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role, approval_status, onboarding_completed')
+      .select('role, approval_status, onboarding_completed, organization_id')
       .eq('id', user.id)
       .maybeSingle();
 
@@ -59,6 +60,7 @@ export async function middleware(request: NextRequest) {
       if (typeof profile.onboarding_completed === 'boolean') {
         onboardingCompleted = profile.onboarding_completed;
       }
+      if (profile.organization_id) organizationId = profile.organization_id as string;
     }
   } catch {
     // If profile lookup errors, retain default pending/user values
@@ -135,6 +137,23 @@ export async function middleware(request: NextRequest) {
   // Forward to /dashboard
   if (pathname === '/onboarding' && (onboardingCompleted || userRole === 'admin')) {
     return NextResponse.redirect(new URL('/dashboard', request.url));
+  }
+
+  // 8b. ENTERPRISE ORGANIZATION MANAGEMENT ACCESS CONTROL:
+  // /dashboard/enterprise requires an authenticated, approved enterprise account with a
+  // linked organization. Employees, users, and advisors are redirected to their own
+  // dashboard rather than granted access — no cookies/localStorage are consulted, only
+  // the verified database profile fetched above via the RLS session.
+  // 'company' is a legacy synonym for 'enterprise' still present on older profile rows.
+  if (pathname.startsWith('/dashboard/enterprise')) {
+    const isApprovedEnterpriseOwner =
+      (userRole === 'enterprise' || userRole === 'company') && userStatus === 'approved' && !!organizationId;
+
+    if (!isApprovedEnterpriseOwner && userRole !== 'admin') {
+      // Pending enterprise accounts are already redirected to /pending-approval above (step 5);
+      // this branch only runs for approved-but-wrong-role or organization-less callers.
+      return NextResponse.redirect(new URL('/dashboard', request.url));
+    }
   }
 
   // 9. AUTHORIZED ACCESS (Dashboard & Protected Routes):

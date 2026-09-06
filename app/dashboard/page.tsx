@@ -33,6 +33,7 @@ import {
   LogOut,
   User,
   KeyRound,
+  Users,
 } from 'lucide-react';
 import {
   getBrowserSupabase,
@@ -477,13 +478,23 @@ export default function DashboardScoutPage() {
                 <span>Curator Admin</span>
               </Link>
             )}
-            {userProfile.role === 'enterprise' && (
+            {(userProfile.role === 'enterprise' || userProfile.role === 'company') && (
               <Link
                 href="/challenges"
                 className="px-2.5 py-1 rounded-lg bg-amber-950 border border-amber-800 text-amber-300 hover:bg-amber-900 transition-colors flex items-center gap-1 text-[11px]"
               >
                 <Briefcase className="w-3 h-3 text-amber-400" />
                 <span>RFP Grants</span>
+              </Link>
+            )}
+            {/* 'company' is a legacy synonym for 'enterprise' still present on older profile rows. */}
+            {(userProfile.role === 'enterprise' || userProfile.role === 'company') && (
+              <Link
+                href="/dashboard/enterprise"
+                className="px-2.5 py-1 rounded-lg bg-sky-950 border border-sky-800 text-sky-300 hover:bg-sky-900 transition-colors flex items-center gap-1 text-[11px]"
+              >
+                <Users className="w-3 h-3 text-sky-400" />
+                <span>Employee Approvals</span>
               </Link>
             )}
             <button

@@ -112,6 +112,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Enterprise accounts require an organization to be created/linked on approval.
+    // 'company' is a legacy synonym for 'enterprise' still present on older profile rows
+    // (see lib/db.ts, app/admin/page.tsx) and must be treated identically here.
+    // Validate BEFORE any write so the operation either fully succeeds or fully rejects.
+    const isEnterpriseApproval =
+      decision === 'approved' && (existingProfile.role === 'enterprise' || existingProfile.role === 'company');
+    const companyName = typeof existingProfile.company_name === 'string' ? existingProfile.company_name.trim() : '';
+
+    if (isEnterpriseApproval && !companyName) {
+      return NextResponse.json(
+        { error: 'Cannot approve enterprise account: required company information (company name) is missing from the profile.' },
+        { status: 400 }
+      );
+    }
+
     // Merge metadata with decision audit telemetry
     const updatedMetadata = {
       ...(existingProfile.metadata || {}),
@@ -133,6 +148,66 @@ export async function POST(request: NextRequest) {
       updatePayload.onboarding_completed = false;
     }
 
+    let organizationRecord: any = null;
+
+    if (isEnterpriseApproval) {
+      // Idempotent upsert keyed on owner_id (unique partial index, see
+      // scripts/004_enterprise_employee_approval.sql) so retried/duplicate approvals
+      // never create a second organization for the same enterprise account.
+      const { data: upsertedOrg, error: orgUpsertErr } = await adminSupabase
+        .from('organizations')
+        .upsert(
+          {
+            name: companyName,
+            owner_id: userId,
+            industry: existingProfile.industry || null,
+            domain: (existingProfile.email || '').split('@')[1] || null,
+            approval_status: 'approved',
+            verified_at: decisionTime,
+            verified_by: actingAdmin.id,
+            updated_at: decisionTime,
+          },
+          { onConflict: 'owner_id' }
+        )
+        .select()
+        .single();
+
+      if (orgUpsertErr || !upsertedOrg) {
+        console.error('Error creating/linking enterprise organization:', orgUpsertErr?.message);
+        return NextResponse.json(
+          { error: `Failed to activate enterprise organization: ${orgUpsertErr?.message || 'Unknown error'}` },
+          { status: 500 }
+        );
+      }
+
+      organizationRecord = upsertedOrg;
+      updatePayload.organization_id = upsertedOrg.id;
+      updatePayload.organization = companyName;
+      // Onboarding remains a separate step for the enterprise owner; never force it here.
+      updatePayload.onboarding_completed = existingProfile.onboarding_completed === true;
+
+      // Idempotent upsert of the owner membership row.
+      const { error: memberErr } = await adminSupabase
+        .from('organization_members')
+        .upsert(
+          {
+            organization_id: upsertedOrg.id,
+            user_id: userId,
+            role: 'owner',
+            is_primary: true,
+          },
+          { onConflict: 'organization_id,user_id' }
+        );
+
+      if (memberErr) {
+        console.error('Error linking enterprise owner membership:', memberErr.message);
+        return NextResponse.json(
+          { error: `Failed to link organization owner membership: ${memberErr.message}` },
+          { status: 500 }
+        );
+      }
+    }
+
     const { data: updatedRecord, error: updateErr } = await adminSupabase
       .from('profiles')
       .update(updatePayload)
@@ -151,6 +226,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       record: updatedRecord,
+      organization: organizationRecord,
       decision,
       decidedBy: actingAdmin.id,
       decidedAt: decisionTime,

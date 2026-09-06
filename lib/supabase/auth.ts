@@ -134,11 +134,23 @@ export async function requirePlatformAdmin(): Promise<AuthOutcome> {
   return { authorized: true, user };
 }
 
+export type EnterpriseAuthOutcome =
+  | { authorized: true; user: AuthContextUser; organizationId: string | null }
+  | { authorized: false; user?: never; organizationId?: never; error: string; status: 401 | 403 | 404 };
+
 /**
- * 4. requireEnterpriseApprover
- * Ensures the caller is either a Platform Admin OR an approved owner/admin of the target organization.
+ * 4. requireEnterpriseOrgAuthority
+ * Resolves enterprise organization-management authority strictly from verified database records.
+ *
+ * - Platform Admins may explicitly pass `requestedOrgId` to inspect any organization (their identity
+ *   and role are still cryptographically verified server-side via getCurrentUser()).
+ * - Non-admin callers (enterprise owners/admins) NEVER get to choose which organization they manage:
+ *   `requestedOrgId` is ignored entirely for them. Their managed organization is derived only from
+ *   their own verified profile (`organization_id`) plus a matching `organization_members` row with
+ *   `owner` or `admin` role. This prevents a browser-supplied orgId from granting authority it wasn't
+ *   independently proven to hold.
  */
-export async function requireEnterpriseApprover(targetOrganizationId?: string | null): Promise<AuthOutcome> {
+export async function requireEnterpriseOrgAuthority(requestedOrgId?: string | null): Promise<EnterpriseAuthOutcome> {
   const user = await getCurrentUser();
 
   if (!user) {
@@ -149,9 +161,18 @@ export async function requireEnterpriseApprover(targetOrganizationId?: string | 
     };
   }
 
-  // Platform admin is always authorized
+  // Platform admin: explicitly verified server-side via the database role, may target any org.
   if (user.role === 'admin') {
-    return { authorized: true, user };
+    return { authorized: true, user, organizationId: requestedOrgId || null };
+  }
+
+  // 'company' is a legacy synonym for 'enterprise' still present on older profile rows.
+  if (user.role !== 'enterprise' && user.role !== 'company') {
+    return {
+      authorized: false,
+      error: 'Forbidden: Enterprise organization management authority required.',
+      status: 403,
+    };
   }
 
   if (user.approval_status !== 'approved') {
@@ -162,36 +183,27 @@ export async function requireEnterpriseApprover(targetOrganizationId?: string | 
     };
   }
 
-  if (!targetOrganizationId) {
-    // If no target org specified, check if they manage at least one organization
-    if (user.role === 'enterprise' && user.organization_id) {
-      return { authorized: true, user };
-    }
+  if (!user.organization_id) {
     return {
       authorized: false,
-      error: 'Forbidden: Missing target organization authority.',
+      error: 'Forbidden: No organization is linked to your account yet.',
       status: 403,
     };
   }
 
-  // Direct org match for enterprise profile
-  if (user.role === 'enterprise' && user.organization_id === targetOrganizationId) {
-    return { authorized: true, user };
-  }
-
-  // Check organization_members table for owner or admin membership
+  // Confirm owner/admin membership in organization_members for the caller's own linked organization.
   try {
     const adminDb = createAdminClient();
     const { data: memberRecord } = await adminDb
       .from('organization_members')
       .select('role')
-      .eq('organization_id', targetOrganizationId)
+      .eq('organization_id', user.organization_id)
       .eq('user_id', user.id)
       .in('role', ['owner', 'admin'])
       .maybeSingle();
 
     if (memberRecord) {
-      return { authorized: true, user };
+      return { authorized: true, user, organizationId: user.organization_id };
     }
   } catch (err) {
     console.error('Error verifying enterprise authority:', err);
