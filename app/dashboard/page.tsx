@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   Sparkles,
@@ -188,8 +188,9 @@ export default function DashboardScoutPage() {
   const [prompt, setPrompt] = useState('');
   const [isScouting, setIsScouting] = useState(false);
   const [scoutedResults, setScoutedResults] = useState<ScoutResult[]>(INITIAL_RECOMMENDATIONS);
-  const [savedItems, setSavedItems] = useState<SavedItem[]>(INITIAL_SAVED_ITEMS);
-  const [activities, setActivities] = useState<ActivityItem[]>(INITIAL_ACTIVITIES);
+  const [savedItems, setSavedItems] = useState<SavedItem[]>([]);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [scoutFeedback, setScoutFeedback] = useState<string | null>(null);
 
   const userProfile: {
@@ -203,6 +204,41 @@ export default function DashboardScoutPage() {
     fullName: profile?.full_name || user?.email?.split('@')[0] || 'User',
     organization: profile?.organization || undefined,
   };
+
+  useEffect(() => {
+    let active = true;
+    async function loadWorkspaceData() {
+      try {
+        const [bookmarksResponse, activityResponse] = await Promise.all([
+          fetch('/api/bookmarks'),
+          fetch('/api/activity'),
+        ]);
+        if (!bookmarksResponse.ok || !activityResponse.ok) throw new Error('Unable to load workspace data.');
+        const [bookmarkData, activityData] = await Promise.all([bookmarksResponse.json(), activityResponse.json()]);
+        if (!active) return;
+        setSavedItems((bookmarkData.bookmarks || []).map((bookmark: any) => ({
+          id: bookmark.catalog_id,
+          title: bookmark.catalog?.title || bookmark.catalog_id,
+          category: bookmark.catalog?.category || 'Uncategorized',
+          type: bookmark.catalog?.type || 'Catalog item',
+          trl: bookmark.catalog?.trl || 0,
+          savedAt: new Date(bookmark.created_at).toLocaleDateString(),
+          updateAlert: bookmark.notes || undefined,
+        })));
+        setActivities((activityData.activity || []).filter((entry: any) => entry.action === 'scout_query').map((entry: any) => ({
+          id: entry.id,
+          query: entry.metadata?.query || entry.entity_id || 'Scouting query',
+          timestamp: new Date(entry.created_at).toLocaleString(),
+          matchesFound: entry.metadata?.matchesFound || 0,
+          domain: entry.metadata?.domain || 'AI Scout',
+        })));
+      } catch (loadError) {
+        if (active) setDataError(loadError instanceof Error ? loadError.message : 'Unable to load workspace data.');
+      }
+    }
+    void loadWorkspaceData();
+    return () => { active = false; };
+  }, []);
 
   // Handle scouting execution
   const handleExecuteScout = (customPrompt?: string) => {
@@ -368,11 +404,19 @@ export default function DashboardScoutPage() {
     handleExecuteScout(presetPrompt);
   };
 
-  const toggleSaveItem = (item: ScoutResult) => {
+  const toggleSaveItem = async (item: ScoutResult) => {
     const isSaved = savedItems.some((s) => s.id === item.id);
-    if (isSaved) {
-      setSavedItems(savedItems.filter((s) => s.id !== item.id));
-    } else {
+    try {
+      const response = await fetch(isSaved ? `/api/bookmarks?catalogId=${encodeURIComponent(item.id)}` : '/api/bookmarks', {
+        method: isSaved ? 'DELETE' : 'POST',
+        headers: isSaved ? undefined : { 'Content-Type': 'application/json' },
+        body: isSaved ? undefined : JSON.stringify({ catalogId: item.id }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to update bookmark.');
+      if (isSaved) {
+        setSavedItems((items) => items.filter((saved) => saved.id !== item.id));
+      } else {
       const newItem: SavedItem = {
         id: item.id,
         title: item.title,
@@ -382,16 +426,27 @@ export default function DashboardScoutPage() {
         savedAt: 'Just now',
         updateAlert: item.statusNote,
       };
-      setSavedItems([newItem, ...savedItems]);
+        setSavedItems((items) => [newItem, ...items]);
+      }
+    } catch (bookmarkError) {
+      setDataError(bookmarkError instanceof Error ? bookmarkError.message : 'Unable to update bookmark.');
     }
   };
 
-  const removeSavedItem = (id: string) => {
-    setSavedItems(savedItems.filter((item) => item.id !== id));
+  const removeSavedItem = async (id: string) => {
+    try {
+      const response = await fetch(`/api/bookmarks?catalogId=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to remove bookmark.');
+      setSavedItems((items) => items.filter((item) => item.id !== id));
+    } catch (bookmarkError) {
+      setDataError(bookmarkError instanceof Error ? bookmarkError.message : 'Unable to remove bookmark.');
+    }
   };
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col selection:bg-cyan-500/20 selection:text-cyan-200">
+      {dataError && <div className="mx-auto mt-4 w-full max-w-7xl rounded-lg border border-rose-900 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">{dataError}</div>}
       {/* Top RBAC Command Bar */}
       <div className="border-b border-neutral-900 bg-neutral-950/80 backdrop-blur-md sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-between text-xs font-mono">

@@ -89,6 +89,7 @@ export default function AiScoutPage() {
   const [loadingStep, setLoadingStep] = useState(0);
   const [result, setResult] = useState<ScoutingResult | null>(null);
   const [savedIds, setSavedIds] = useState<string[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [copiedBriefing, setCopiedBriefing] = useState(false);
   const [recentQueries, setRecentQueries] = useState<string[]>([
     'Solid-state electrolytes with TRL above 4',
@@ -109,6 +110,18 @@ export default function AiScoutPage() {
       timers.forEach(clearTimeout);
     };
   }, [isLoading]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadBookmarks() {
+      const response = await fetch('/api/bookmarks');
+      if (!response.ok) return;
+      const data = await response.json();
+      if (active) setSavedIds((data.bookmarks || []).map((bookmark: { catalog_id: string }) => bookmark.catalog_id));
+    }
+    void loadBookmarks();
+    return () => { active = false; };
+  }, []);
 
   const handleExecuteScout = async (customQuery?: string) => {
     const searchQuery = customQuery || query;
@@ -133,6 +146,11 @@ export default function AiScoutPage() {
 
       const data: ScoutingResult = await res.json();
       setResult(data);
+      void fetch('/api/activity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'scout_query', entityId: searchQuery, metadata: { query: searchQuery, domain: data.detectedDomain, matchesFound: data.recommendations.length } }),
+      });
     } catch (err) {
       console.error('Error querying AI Scout:', err);
     } finally {
@@ -140,10 +158,21 @@ export default function AiScoutPage() {
     }
   };
 
-  const handleToggleSave = (id: string) => {
-    setSavedIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    );
+  const handleToggleSave = async (id: string) => {
+    const isSaved = savedIds.includes(id);
+    setSaveError(null);
+    try {
+      const response = await fetch(isSaved ? `/api/bookmarks?catalogId=${encodeURIComponent(id)}` : '/api/bookmarks', {
+        method: isSaved ? 'DELETE' : 'POST',
+        headers: isSaved ? undefined : { 'Content-Type': 'application/json' },
+        body: isSaved ? undefined : JSON.stringify({ catalogId: id }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to update bookmark.');
+      setSavedIds((previous) => isSaved ? previous.filter((item) => item !== id) : [...previous, id]);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Unable to update bookmark.');
+    }
   };
 
   const handleCopyBriefing = () => {
@@ -179,7 +208,7 @@ ${result.recommendations
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col selection:bg-cyan-500/20 selection:text-cyan-200">
-      
+      {saveError && <div className="mx-auto mt-4 w-full max-w-7xl rounded-lg border border-rose-900 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">{saveError}</div>}
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-10">

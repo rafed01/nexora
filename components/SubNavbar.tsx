@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import clsx, { ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { useAuth } from "@/components/providers/AuthProvider";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -31,6 +32,7 @@ function cn(...inputs: ClassValue[]) {
 
 export default function SubNavbar() {
   const pathname = usePathname();
+  const { profile } = useAuth();
 
   // Determine subnav configuration based on current route
   const getSubNavConfig = () => {
@@ -64,11 +66,11 @@ export default function SubNavbar() {
           { name: "Domain Experts", href: "/explore?type=expert" },
         ],
         badge: "48 Verified Assets",
-        action: {
+        action: profile?.role === 'admin' ? {
           name: "Add Entity",
           href: "/admin",
           icon: PlusCircle,
-        },
+        } : null,
       };
     }
 
@@ -210,7 +212,7 @@ export default function SubNavbar() {
 
   const config = getSubNavConfig();
   const IconComponent = config.icon;
-  const ActionIcon = config.action.icon;
+  const ActionIcon = config.action?.icon;
 
   return (
     <div className="sticky top-16 z-40 w-full bg-neutral-950/90 backdrop-blur-md border-b border-neutral-800/80 text-xs">
@@ -254,7 +256,7 @@ export default function SubNavbar() {
           </div>
 
           {/* Right Page-Specific Action */}
-          <div className="flex items-center shrink-0">
+          {config.action && ActionIcon && <div className="flex items-center shrink-0">
             <Link
               href={config.action.href}
               className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-neutral-300 hover:text-white transition-colors text-[11px] font-medium shadow-sm whitespace-nowrap"
@@ -262,7 +264,7 @@ export default function SubNavbar() {
               <ActionIcon className="w-3 h-3 text-cyan-400" />
               <span>{config.action.name}</span>
             </Link>
-          </div>
+          </div>}
         </div>
       </div>
     </div>
